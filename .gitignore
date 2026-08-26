@@ -1,0 +1,17 @@
+# Variables de entorno reales
+.env
+
+# Node
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/settings.json
+.idea/
