@@ -5,6 +5,7 @@
 node_modules/
 
 # Python
+venv/
 __pycache__/
 *.pyc
 
@@ -15,3 +16,7 @@ Thumbs.db
 # IDEs
 .vscode/settings.json
 .idea/
+
+# Credenciales
+credentials/
+token.json
