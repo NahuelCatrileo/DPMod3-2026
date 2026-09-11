@@ -1,60 +1,31 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import RedirectResponse
+"""Punto de entrada del Modulo 3 - Publicacion y Programacion (Equipo C)."""
 
-from app.auth import create_authorization_url, exchange_code_for_token
-from starlette.middleware.sessions import SessionMiddleware
+import logging
+
+from fastapi import FastAPI
+
+from app.config import get_settings
+
+settings = get_settings()
+
+logging.basicConfig(
+    level=settings.LOG_LEVEL,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 
 app = FastAPI(
-    title="Módulo 3 - Publicación",
-    description="Scheduler e integración con YouTube",
-    version="1.0.0"
+    title="PubTube - Modulo 3 - Publicacion y Programacion",
+    version="0.1.0",
 )
 
-app.add_middleware(
-    SessionMiddleware,
-    secret_key="clave-secreta-desarrollo"
-)
 
-@app.get("/")
-def root():
+@app.get("/api/health", tags=["health"])
+def health() -> dict:
     return {
         "status": "ok",
-        "module": "module-3"
-    }
-
-
-@app.get("/health")
-def health():
-    return {
-        "status": "healthy"
-    }
-
-
-@app.get("/oauth2/authorize")
-def authorize(request: Request):
-    authorization_url, state, code_verifier = create_authorization_url()
-
-    request.session["state"] = state
-    request.session["code_verifier"] = code_verifier
-
-    return RedirectResponse(authorization_url)
-
-@app.get("/oauth2/callback")
-async def oauth_callback(request: Request):
-    code_verifier = request.session.get("code_verifier")
-
-    if not code_verifier:
-        return {
-            "status": "error",
-            "message": "No se encontró el code_verifier de OAuth"
-        }
-
-    credentials = exchange_code_for_token(
-        str(request.url),
-        code_verifier
-    )
-
-    return {
-        "status": "ok",
-        "message": "Autenticación con Google completada"
+        "data": {
+            "module": settings.MODULE_NAME,
+            "publisherMode": settings.PUBLISHER_MODE,
+            "eventTransport": settings.EVENT_TRANSPORT,
+        },
     }
