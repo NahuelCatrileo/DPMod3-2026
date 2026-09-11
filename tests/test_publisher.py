@@ -51,6 +51,13 @@ def test_el_fallo_tambien_es_determinista():
     assert len(resultados) == 1
 
 
+def test_el_publicador_no_emite_eventos(events):
+    """Criterio de aceptación: mock y real deben emitir lo mismo.
+    Se cumple porque NINGUNO de los dos emite: emite services/publishing.py."""
+    MockPublisher(latency_seconds=0, failure_rate=0).publish_video("c-001")
+    assert events.published == []
+
+
 # --- Subtarea 4.3: feature flag -------------------------------------------
 
 
