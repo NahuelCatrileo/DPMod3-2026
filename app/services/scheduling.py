@@ -106,6 +106,12 @@ def schedule_publication(
         publication.correlation_id,
     )
 
+    # Registro del job (US-C2 · Subtarea 2.2). Import local para evitar un
+    # ciclo entre services y scheduler.
+    from app.scheduler.scheduler import schedule_job
+
+    schedule_job(publication.id, schedule_at_utc)
+
     # Subtarea 1.4 — emisión del evento
     envelope = build_envelope(
         event_type="publish.scheduled",

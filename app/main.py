@@ -13,6 +13,7 @@ from app.api.routes_publish import router as publish_router
 from app.config import get_settings
 from app.infra.publishers.factory import get_publisher
 from app.oauth.routes_oauth import router as oauth_router
+from app.scheduler.scheduler import shutdown_scheduler, start_scheduler
 
 settings = get_settings()
 
@@ -31,7 +32,9 @@ async def lifespan(_: FastAPI):
         settings.EVENT_TRANSPORT,
     )
     get_publisher()
+    start_scheduler()
     yield
+    shutdown_scheduler()
     logger.info("modulo_detenido")
 
 
@@ -54,11 +57,16 @@ app.include_router(oauth_router)
 
 @app.get("/api/health", tags=["health"])
 def health() -> dict:
+    from app.scheduler.scheduler import get_scheduler
+
+    scheduler = get_scheduler()
     return {
         "status": "ok",
         "data": {
             "module": settings.MODULE_NAME,
             "publisherMode": settings.PUBLISHER_MODE,
             "eventTransport": settings.EVENT_TRANSPORT,
+            "schedulerRunning": bool(scheduler and scheduler.running),
+            "pendingJobs": len(scheduler.get_jobs()) if scheduler else 0,
         },
     }
