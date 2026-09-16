@@ -1,0 +1,21 @@
+# ADR-0001 — Elección del Stack Tecnológico Backend (Python + FastAPI)
+
+## Estado
+Aceptada · 2026-09-16 · Sprint 1
+
+## Contexto
+Para el desarrollo del Módulo 3 (Publicación y Programación), necesitamos definir el lenguaje y framework del backend. El sistema requiere integración intensiva con la API oficial de YouTube (OAuth 2.0), un programador de tareas (scheduler) persistente para la publicación diferida, y exponer una API REST documentada con OpenAPI. El marco del proyecto exige herramientas gratuitas y open source.
+
+## Alternativas consideradas
+1. **Node.js + NestJS:** Excelente manejo asíncrono y estructura fuertemente tipada con TypeScript. Sin embargo, la integración con librerías de calendarización complejas puede ser menos directa que en otros lenguajes.
+2. **Go + Gin:** Alto rendimiento y binarios ligeros. Descartado porque la curva de aprendizaje del equipo es mayor y el ecosistema para la API de Google es un poco más verboso.
+3. **Python + FastAPI:** Stack recomendado como Opción A en la Guía Técnica del proyecto. 
+
+## Decisión
+Se decidió utilizar **Python con FastAPI**. 
+Esta elección se fundamenta en que Python cuenta con el cliente oficial más robusto para la Google/YouTube Data API v3 y librerías maduras como `APScheduler` que cubren exactamente el requerimiento de la historia US-C2 (Scheduler persistente). Además, FastAPI autogenera la documentación OpenAPI requerida en los criterios de aceptación transversales (US-X3), acelerando la entrega de los contratos REST.
+
+## Consecuencias
+* **Gana el proyecto:** Velocidad de desarrollo, documentación automática (Swagger) nativa, y facilidad para integrar el SDK de Google y RabbitMQ (`pika` o `aio-pika`).
+* **Cuesta:** Obliga al equipo a nivelar conocimientos en el manejo asíncrono de Python (`asyncio`) y la gestión de dependencias (requerirá un requirements.txt o Poetry estructurado para el contenedor).
+* **Pendiente:** Definir la librería exacta para la conexión a PostgreSQL (ej. SQLAlchemy o asyncpg) y el cliente de RabbitMQ en las próximas tareas.
