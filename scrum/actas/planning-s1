@@ -1,0 +1,26 @@
+# Acta de Planning — Sprint 1
+
+| **Campo** | **Contenido** |
+| :--- | :--- |
+| **Fecha y hora** | Lunes 31 de agosto de 2026, 14:00 hrs |
+| **Duración** | 2 horas |
+| **Asistentes** | Héctor, Nahuel, Alonso, Francisco |
+| **Ausentes justificados** | Ninguno |
+| **Facilitador (SM)** | Alonso |
+
+## Temas tratados
+* Revisión del objetivo del Sprint 1 para el Módulo 3: Entregar un publicador en modo mock consumiendo metadatos y el esqueleto del scheduler.
+* Estimación de las historias de usuario US-C4 (3 SP), US-C1 (5 SP) y US-C2 (8 SP) y las tareas técnicas base (TECH-C1, C2, C3, O1). Total del compromiso real: 29 SP.
+* Desglose de las historias US-C4 y US-C1 en tareas técnicas más pequeñas para balancear la carga de trabajo de forma equitativa.
+* Definición de la tecnología principal a utilizar (Python + FastAPI) y necesidad de documentarlo en un ADR.
+* Discusión sobre la dependencia de los contratos de eventos, específicamente `metadata.updated`, que proveerá el Equipo A.
+
+## Acuerdos
+
+| **#** | **Acuerdo** | **Responsable** | **Fecha comprometida** |
+| :--- | :--- | :--- | :--- |
+| *1* | Dividir las Historias US-C4 y US-C1 en subtareas técnicas individuales y asignarlas en el tablero para asegurar trabajo en paralelo. | Alonso (SM) | 31/08/2026 |
+| *2* | Crear el repositorio inicial, configurar el `docker-compose.yml` base y publicar el `ROLES.md`. | Alonso | 01/09/2026 |
+| *3* | Redactar el ADR-0001 justificando la elección de Python + FastAPI. | Nahuel | 03/09/2026 |
+| *4* | Preparar el esquema base del endpoint POST `/api/publish/schedule` en OpenAPI para notificar al Equipo D. | Francisco | 03/09/2026 |
+| *5* | Crear el esqueleto de las pruebas unitarias exigidas por la Definition of Done antes de codificar la lógica (TDD básico). | Héctor | 04/09/2026 |
