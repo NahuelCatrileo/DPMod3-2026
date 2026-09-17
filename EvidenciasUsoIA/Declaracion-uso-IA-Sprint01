@@ -1,0 +1,21 @@
+# Declaración de Uso de IA Generativa — Equipo C (Módulo 3)
+
+Guía del Estudiante §8.1 y Anexo D. Se actualiza en cada sprint y se replica
+como sección del informe final.
+
+El uso de IA está permitido en este curso. Lo que se sanciona es **no
+declararlo**. Un equipo con declaración completa y honesta no pierde un solo
+punto por haber usado IA.
+
+---
+
+## Sprint 1
+
+
+| Sprint | Herramienta | En qué se usó | Verificación humana aplicada | Responsable |
+|---|---|---|---|---|
+| S1 | Claude  | **US-C4** — Código del publicador simulado: la clase base que define qué debe hacer cualquier publicador, la versión de prueba que finge subir el video a YouTube, y el selector que elige entre una y otra según una variable de entorno | Los 12 tests del publicador pasan en máquina del equipo. **Pendiente:** verificar la conmutación en vivo cambiando `PUBLISHER_MODE` en `.env` y comprobando que `GET /api/health` refleja el cambio | Hector |
+| S1 | Claude  | **US-C1** — Código para programar una publicación: el endpoint que recibe la solicitud, las validaciones de que la fecha sea futura y la zona horaria exista, la tabla donde se guarda, y el aviso que se envía al resto del sistema | Verificado en vivo contra PostgreSQL vía Swagger: `202` con fecha futura y `409 SCHEDULE_CONFLICT` con fecha pasada. La migración de Alembic se aplicó correctamente. **Pendiente:** probar `422 INVALID_METADATA` con zona horaria inexistente y `409` por programación duplicada | Hector |
+| S1 | Claude  | **US-C2 (esqueleto)** — Código del temporizador que dispara la publicación a su hora: guarda las tareas pendientes en la base de datos para que sobrevivan a un reinicio, y la función que se ejecuta al llegar el momento sin publicar dos veces si se dispara repetido | Los 14 tests del job handler pasan. El scheduler arranca junto a la aplicación (`scheduler_iniciado` en los logs). **Pendiente:** verificar el flujo completo en vivo — que una publicación programada pase a `published` y emita `publish.completed` con el mismo `correlationId`  | Hector |
+| S1 | Claude  | **Infraestructura** — Archivos para levantar el módulo con un solo comando (Docker), la migración que crea la tabla en la base de datos, la configuración por variables de entorno, y el pipeline que ejecuta las pruebas en cada push | PostgreSQL levanta con `docker compose up -d postgres` y las migraciones se aplican sin intervención manual. **Pendiente:** levantar el stack completo con `docker compose up --build` desde un clon limpio | Hector |
+| S1 | Claude (Anthropic) | Escritura de las 38 pruebas automatizadas: las que revisan una clase aislada, las que revisan el módulo junto a su base de datos | Suite completa ejecutada en máquina del equipo: 38 pasando, 89 % de cobertura, `ruff` sin hallazgos. **Pendiente:** comprobar que las pruebas fallan cuando deben fallar | Hector|
