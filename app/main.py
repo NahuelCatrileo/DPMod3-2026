@@ -1,60 +1,72 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import RedirectResponse
+"""Punto de entrada del Módulo 3 — Publicación y Programación (Equipo C)."""
 
-from app.auth import create_authorization_url, exchange_code_for_token
+from __future__ import annotations
+
+import logging
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
 
-app = FastAPI(
-    title="Módulo 3 - Publicación",
-    description="Scheduler e integración con YouTube",
-    version="1.0.0"
+from app.api.errors import register_error_handlers
+from app.api.routes_publish import router as publish_router
+from app.config import get_settings
+from app.infra.publishers.factory import get_publisher
+from app.oauth.routes_oauth import router as oauth_router
+from app.scheduler.scheduler import shutdown_scheduler, start_scheduler
+
+settings = get_settings()
+
+logging.basicConfig(
+    level=settings.LOG_LEVEL,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
-
-app.add_middleware(
-    SessionMiddleware,
-    secret_key="clave-secreta-desarrollo"
-)
-
-@app.get("/")
-def root():
-    return {
-        "status": "ok",
-        "module": "module-3"
-    }
+logger = logging.getLogger(__name__)
 
 
-@app.get("/health")
-def health():
-    return {
-        "status": "healthy"
-    }
-
-
-@app.get("/oauth2/authorize")
-def authorize(request: Request):
-    authorization_url, state, code_verifier = create_authorization_url()
-
-    request.session["state"] = state
-    request.session["code_verifier"] = code_verifier
-
-    return RedirectResponse(authorization_url)
-
-@app.get("/oauth2/callback")
-async def oauth_callback(request: Request):
-    code_verifier = request.session.get("code_verifier")
-
-    if not code_verifier:
-        return {
-            "status": "error",
-            "message": "No se encontró el code_verifier de OAuth"
-        }
-
-    credentials = exchange_code_for_token(
-        str(request.url),
-        code_verifier
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    logger.info(
+        "modulo_iniciando publisher_mode=%s event_transport=%s",
+        settings.PUBLISHER_MODE,
+        settings.EVENT_TRANSPORT,
     )
+    get_publisher()
+    start_scheduler()
+    yield
+    shutdown_scheduler()
+    logger.info("modulo_detenido")
 
+
+app = FastAPI(
+    title="PubTube · Módulo 3 — Publicación y Programación",
+    description=(
+        "Equipo C. Scheduler de publicaciones e integración con YouTube "
+        "Data API v3 (modo simulado conmutable)."
+    ),
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
+app.add_middleware(SessionMiddleware, secret_key=settings.SESSION_SECRET_KEY)
+
+register_error_handlers(app)
+app.include_router(publish_router)
+app.include_router(oauth_router)
+
+
+@app.get("/api/health", tags=["health"])
+def health() -> dict:
+    from app.scheduler.scheduler import get_scheduler
+
+    scheduler = get_scheduler()
     return {
         "status": "ok",
-        "message": "Autenticación con Google completada"
+        "data": {
+            "module": settings.MODULE_NAME,
+            "publisherMode": settings.PUBLISHER_MODE,
+            "eventTransport": settings.EVENT_TRANSPORT,
+            "schedulerRunning": bool(scheduler and scheduler.running),
+            "pendingJobs": len(scheduler.get_jobs()) if scheduler else 0,
+        },
     }

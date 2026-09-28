@@ -1,0 +1,63 @@
+{
+  "modulo": "module-3",
+  "equipo": "C",
+  "generado": "2026-09-10T14:00:52+00:00",
+  "envelopeVersion": 1,
+  "publicamos": [
+    "publish.scheduled",
+    "publish.completed",
+    "publish.failed"
+  ],
+  "consumimos": [
+    "metadata.updated (pendiente de acuerdo con Equipo A)"
+  ],
+  "puntosAbiertos": [
+    "Campo 'source': incluido segun Doc 3 §3.1 y la columna source de event_store (Doc 3 §6). El Doc 1 §6.3 lo omite. ¿Equipo B lo acepta?",
+    "Payload exacto de metadata.updated y fecha de disponibilidad. ¿Equipo A?"
+  ],
+  "ejemplos": {
+    "publish.scheduled": {
+      "id": "781258b6-8b24-44af-8861-9afd3f32fde4",
+      "type": "publish.scheduled",
+      "version": 1,
+      "timestamp": "2026-09-10T14:00:52Z",
+      "correlationId": "corr-evidencia-2026-09-10",
+      "causationId": "781258b6-8b24-44af-8861-9afd3f32fde4",
+      "source": "module-3",
+      "payload": {
+        "contentId": "c-demo-ok",
+        "scheduleAt": "2026-09-10T14:05:52Z",
+        "timezone": "America/Santiago"
+      }
+    },
+    "publish.completed": {
+      "id": "de05df74-5387-4923-a206-f852380ba7be",
+      "type": "publish.completed",
+      "version": 1,
+      "timestamp": "2026-09-10T14:00:52Z",
+      "correlationId": "corr-evidencia-2026-09-10",
+      "causationId": "de05df74-5387-4923-a206-f852380ba7be",
+      "source": "module-3",
+      "payload": {
+        "contentId": "c-demo-ok",
+        "youtubeVideoId": "8838c36c39e",
+        "publishedAt": "2026-09-10T14:00:52Z"
+      }
+    },
+    "publish.failed": {
+      "id": "8ca04a70-5e43-477f-97fe-87cbdee01e67",
+      "type": "publish.failed",
+      "version": 1,
+      "timestamp": "2026-09-10T14:00:52Z",
+      "correlationId": "corr-evidencia-2026-09-10-fail",
+      "causationId": "8ca04a70-5e43-477f-97fe-87cbdee01e67",
+      "source": "module-3",
+      "payload": {
+        "contentId": "c-demo-error",
+        "errorCode": "QUOTA_EXCEEDED",
+        "attempt": 1,
+        "reason": "Cuota de YouTube agotada (simulada por el publicador mock)"
+      }
+    }
+  }
+}
