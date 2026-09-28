@@ -1,24 +1,12 @@
 # Variables de entorno reales
 .env
 
-# Credenciales y tokens OAuth — NUNCA se versionan
-credentials/
-*client_secret*.json
-token.json
-*.pem
-
-# Python
-venv/
-.venv/
-__pycache__/
-*.pyc
-.pytest_cache/
-.coverage
-htmlcov/
-.ruff_cache/
-
 # Node
 node_modules/
+
+# Python
+__pycache__/
+*.pyc
 
 # Sistema operativo
 .DS_Store
