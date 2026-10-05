@@ -57,7 +57,7 @@ app.include_router(oauth_router)
 
 @app.get("/api/health", tags=["health"])
 def health() -> dict:
-    from app.scheduler.scheduler import get_scheduler
+    from app.scheduler.scheduler import get_scheduler, publication_jobs
 
     scheduler = get_scheduler()
     return {
@@ -67,6 +67,6 @@ def health() -> dict:
             "publisherMode": settings.PUBLISHER_MODE,
             "eventTransport": settings.EVENT_TRANSPORT,
             "schedulerRunning": bool(scheduler and scheduler.running),
-            "pendingJobs": len(scheduler.get_jobs()) if scheduler else 0,
+            "pendingJobs": len(publication_jobs()),
         },
     }

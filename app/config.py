@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     # ejecuta igual si el atraso es menor a este margen (en segundos).
     SCHEDULER_MISFIRE_GRACE_SECONDS: int = 3600
     SCHEDULER_TIMEZONE: str = "UTC"
+    # Cada cuánto se reconcilia la tabla publication con el job store
+    # (ADR-0004). Además corre una vez al arrancar.
+    SCHEDULER_RECONCILE_SECONDS: int = 60
 
     # --- OAuth / YouTube (Sprint 3, US-C3) --------------------------------
     GOOGLE_CLIENT_SECRETS_FILE: str = "credentials/client_secret.json"

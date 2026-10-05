@@ -19,7 +19,13 @@ class PublishState(str, Enum):
 
 # Matriz de transiciones válidas. Cualquier par que no esté aquí se rechaza.
 VALID_TRANSITIONS: dict[PublishState, set[PublishState]] = {
-    PublishState.PENDING: {PublishState.PUBLISHING, PublishState.CANCELLED},
+    # pending -> failed: publicación vencida que el scheduler no alcanzó a
+    # disparar dentro del margen (ADR-0004, estado Propuesta).
+    PublishState.PENDING: {
+        PublishState.PUBLISHING,
+        PublishState.CANCELLED,
+        PublishState.FAILED,
+    },
     PublishState.PUBLISHING: {PublishState.PUBLISHED, PublishState.FAILED},
     # US-C7 (Could, Sprint 4): reintento manual failed -> publishing
     PublishState.FAILED: {PublishState.PUBLISHING},
