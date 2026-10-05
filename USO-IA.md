@@ -8,6 +8,9 @@ El uso de IA está permitido; lo que se sanciona es no declararlo.
 | S1 | Claude | Borrador de la estructura por capas y del código de US-C4, US-C1 y el esqueleto de US-C2 | *(completar: quién ejecutó los tests, quién revisó el PR)* | *(completar)* |
 | S1 | Claude | Redacción de los borradores de ADR-0002 y ADR-0003 | *(completar: la decisión fue tomada por el equipo en la sesión del ..., las alternativas se discutieron)* | *(completar)* |
 | S1 | Claude | Revisión crítica del repositorio y del desglose de subtareas | *(completar: qué observaciones se aceptaron y cuáles se descartaron)* | *(completar)* |
+| S2 | Claude | US-C2: diagnóstico del scheduler contra los criterios de aceptación y borrador del código de reconciliación tras reinicio y de cancelación (TECH-C2.4) | *(completar)* | *(completar)* |
+| S2 | Claude | US-C2: borrador de las pruebas de disparo, cancelación y reinicio (TECH-C2.5 y TECH-C2.6). La herramienta ejecutó la suite y comprobó que las pruebas fallan si se desactiva la reconciliación o la cancelación | *(completar)* | *(completar)* |
+| S2 | Claude | Redacción del borrador de ADR-0004 (estado Propuesta) | *(completar: quién revisó la decisión de marcar fallidas las publicaciones vencidas)* | *(completar)* |
 
 > **Antes de entregar esto, léanlo de nuevo.** Las columnas vacías son suyas
 > y no las puede llenar la herramienta. La regla práctica del Review es que si
@@ -20,6 +23,12 @@ El uso de IA está permitido; lo que se sanciona es no declararlo.
 > apoyo: por qué el mock no emite eventos, por qué el fallo del mock es
 > determinista, y por qué la transición `pending → publishing` se hace con un
 > UPDATE condicional en vez de leer-y-escribir.
+
+> **Nota S2 (US-C2).** ADR-0004 queda en estado Propuesta: la decisión de
+> marcar fallida una publicación vencida, en vez de publicarla tarde, la debe
+> tomar y poder defender el equipo. Al menos una persona debe poder explicar
+> sin apoyo por qué el scheduler arranca en pausa y por qué la reconciliación
+> solo toca las filas en `publishing` al arrancar.
 
 Declaramos que la información anterior es completa y veraz, y que todo
 incremento presentado cumple la Definition of Done y puede ser explicado por
