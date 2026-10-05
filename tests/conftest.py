@@ -62,3 +62,29 @@ def client(events, publisher):
 
     with TestClient(app) as c:
         yield c
+
+
+# --- US-C2 · Scheduler real (APScheduler + job store en la base de test) ----
+
+
+def _drop_jobstore() -> None:
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        conn.execute(text("DROP TABLE IF EXISTS apscheduler_jobs"))
+
+
+@pytest.fixture
+def real_scheduler(monkeypatch, events, publisher):
+    """Devuelve una función que arranca el scheduler real, igual que el
+    lifespan de FastAPI. Se puede llamar de nuevo tras stop_scheduler() para
+    simular un reinicio: el job store persiste en la base de test."""
+    from app.config import get_settings
+    from app.scheduler.scheduler import start_scheduler
+    from tests.helpers_scheduler import stop_scheduler
+
+    monkeypatch.setattr(get_settings(), "SCHEDULER_ENABLED", True)
+    _drop_jobstore()
+    yield start_scheduler
+    stop_scheduler()
+    _drop_jobstore()
