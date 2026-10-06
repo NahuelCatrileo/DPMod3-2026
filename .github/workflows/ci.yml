@@ -76,6 +76,7 @@ jobs:
             --env "SCHEDULER_ENABLED=false" \
             --env "SESSION_SECRET_KEY=$JWT_SECRET" \
             pubtube-module-under-test:ci
+            sh -c 'alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8003'
 
       - name: Start Gateway container
         shell: bash
