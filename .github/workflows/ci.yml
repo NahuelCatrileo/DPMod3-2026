@@ -1,35 +1,175 @@
-name: CI
+name: CI - PubTube Modulo 3
 
 on:
   push:
-    branches: ["**"]
+    branches: [main, master, develop, dev]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
 
 jobs:
-  test:
+  gateway-integration:
+    name: Test, build and smoke-test M3 through Gateway
     runs-on: ubuntu-latest
     env:
+      MODULE_SLOT: "3"
+      MODULE_PORT: "8003"
+      GATEWAY_SMOKE_PATH: "/api/publish/health"
+      JWT_SECRET: module-ci-only-secret-change-this-value
       APP_ENV: test
       DATABASE_URL: "sqlite:////tmp/test.db"
       PUBLISHER_MODE: mock
       EVENT_TRANSPORT: log
       MOCK_LATENCY_SECONDS: "0"
       SCHEDULER_ENABLED: "false"
-      SESSION_SECRET_KEY: ci-secret
+      SESSION_SECRET_KEY: module3-ci-session-secret
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout module
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -r requirements-dev.txt
+
+      - name: Install test dependencies
+        run: pip install -r requirements-dev.txt
+
       - name: Lint
         run: ruff check app tests
+
       - name: Tests
         run: pytest --cov=app --cov-report=term-missing --cov-fail-under=70
 
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: docker build -t pubtube-module3:ci .
+      - name: Build module image
+        run: |
+          docker build \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --tag pubtube-module-under-test:ci .
+
+      - name: Pull Gateway image
+        run: docker pull ghcr.io/tilininsano312/pubtube-mod4:develop
+
+      - name: Create integration network
+        run: docker network create module-gateway-integration
+
+      - name: Start module container
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docker run --detach \
+            --name module-under-test \
+            --network module-gateway-integration \
+            --network-alias module-under-test \
+            --env "PORT=$MODULE_PORT" \
+            --env "APP_ENV=test" \
+            --env "DATABASE_URL=sqlite:////tmp/test.db" \
+            --env "PUBLISHER_MODE=mock" \
+            --env "EVENT_TRANSPORT=log" \
+            --env "MOCK_LATENCY_SECONDS=0" \
+            --env "SCHEDULER_ENABLED=false" \
+            --env "SESSION_SECRET_KEY=$JWT_SECRET" \
+            pubtube-module-under-test:ci
+
+      - name: Start Gateway container
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gateway_env=(
+            --env GATEWAY_PORT=8000
+            --env "JWT_SECRET=$JWT_SECRET"
+            --env JWT_ALGORITHM=HS256
+            --env "MODULE3_URL=http://module-under-test:$MODULE_PORT"
+          )
+
+          docker run --detach \
+            --name gateway-under-test \
+            --network module-gateway-integration \
+            --publish 8000:8000 \
+            "${gateway_env[@]}" \
+            ghcr.io/tilininsano312/pubtube-mod4:develop
+
+      - name: Wait for module and Gateway health
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          curl --retry 30 --retry-connrefused --retry-delay 2 --retry-max-time 90 \
+            --fail --silent --show-error \
+            http://127.0.0.1:8000/api/health --output /dev/null
+
+          token="$(docker exec gateway-under-test python -c \
+            'import os,time,jwt; print(jwt.encode({"sub":"module-ci","user_id":"module-ci","role":"admin","exp":int(time.time())+300}, os.environ["JWT_SECRET"], algorithm="HS256"))')"
+
+          healthy=false
+          for attempt in $(seq 1 45); do
+            if curl --fail --silent \
+              --header "Authorization: Bearer $token" \
+              --header "X-Correlation-Id: module-ci-${GITHUB_RUN_ID}" \
+              "http://127.0.0.1:8000/api/publish/health" \
+              --output /dev/null 2>/dev/null; then
+              healthy=true
+              break
+            fi
+            sleep 2
+          done
+
+          if [[ "$healthy" != true ]]; then
+            printf 'M3 health check did not succeed through the Gateway.\n' >&2
+            exit 1
+          fi
+
+          curl --fail --silent --show-error \
+            --header "Authorization: Bearer $token" \
+            --header "X-Correlation-Id: module-ci-${GITHUB_RUN_ID}" \
+            "http://127.0.0.1:8000$GATEWAY_SMOKE_PATH" \
+            --output /dev/null
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up QEMU
+        if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Publish M3 image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="ghcr.io/nahuelcatrileo/dpmod3-2026:develop"
+
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --tag "$image" \
+            --push .
+
+      - name: Show containers and logs on failure
+        if: failure()
+        run: |
+          docker ps -a || true
+          docker logs module-under-test || true
+          docker logs gateway-under-test || true
+
+      - name: Clean up integration containers
+        if: always()
+        run: |
+          docker rm --force module-under-test gateway-under-test || true
+          docker network rm module-gateway-integration || true
