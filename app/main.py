@@ -54,8 +54,8 @@ register_error_handlers(app)
 app.include_router(publish_router)
 app.include_router(oauth_router)
 
-
-@app.get("/api/health", tags=["health"])
+@app.get("/health", tags=["health"])
+@app.get("/api/health", tags=["health"], include_in_schema=False)
 def health() -> dict:
     from app.scheduler.scheduler import get_scheduler
 

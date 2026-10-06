@@ -1,5 +1,5 @@
-def test_health_contracto_gateway(client):
-    response = client.get("/api/health")
+def test_health_contrato_gateway(client):
+    response = client.get("/health")
 
     assert response.status_code == 200
     body = response.json()
