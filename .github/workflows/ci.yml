@@ -69,7 +69,7 @@ jobs:
             -e PORT="$MODULE_PORT" -e APP_ENV -e DATABASE_URL \
             -e PUBLISHER_MODE -e EVENT_TRANSPORT -e MOCK_LATENCY_SECONDS \
             -e SCHEDULER_ENABLED -e SESSION_SECRET_KEY \
-            pubtube-module-under-test:ci
+            pubtube-module-under-test:ci\
             sh -c 'alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port "$PORT"'
 
           docker run -d --name gateway-under-test --network it-net \
