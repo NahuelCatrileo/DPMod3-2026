@@ -2,7 +2,7 @@ name: CI - PubTube Modulo 3
 
 on:
   push:
-    branches: [main, master, develop, dev]
+    branches: [main, develop]
   pull_request:
   workflow_dispatch:
 
@@ -10,17 +10,22 @@ permissions:
   contents: read
   packages: write
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   gateway-integration:
     name: Test, build and smoke-test M3 through Gateway
     runs-on: ubuntu-latest
     env:
-      MODULE_SLOT: "3"
       MODULE_PORT: "8003"
-      GATEWAY_SMOKE_PATH: "/api/publish/health"
+      GATEWAY_SMOKE_PATH: /api/publish/health
+      GATEWAY_IMAGE: ghcr.io/tilininsano312/pubtube-mod4:develop
+      IMAGE: ghcr.io/nahuelcatrileo/dpmod3-2026:develop
       JWT_SECRET: module-ci-only-secret-change-this-value
       APP_ENV: test
-      DATABASE_URL: "sqlite:////tmp/test.db"
+      DATABASE_URL: sqlite:////tmp/test.db
       PUBLISHER_MODE: mock
       EVENT_TRANSPORT: log
       MOCK_LATENCY_SECONDS: "0"
@@ -28,11 +33,9 @@ jobs:
       SESSION_SECRET_KEY: module3-ci-session-secret
 
     steps:
-      - name: Checkout module
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
@@ -46,130 +49,55 @@ jobs:
       - name: Tests
         run: pytest --cov=app --cov-report=term-missing --cov-fail-under=70
 
+      - uses: docker/setup-buildx-action@v3
+
       - name: Build module image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: pubtube-module-under-test:ci
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Start module and Gateway
         run: |
-          docker build \
-            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
-            --tag pubtube-module-under-test:ci .
+          docker network create it-net
 
-      - name: Pull Gateway image
-        run: docker pull ghcr.io/tilininsano312/pubtube-mod4:develop
-
-      - name: Create integration network
-        run: docker network create module-gateway-integration
-
-      - name: Start module container
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          docker run --detach \
-            --name module-under-test \
-            --network module-gateway-integration \
-            --network-alias module-under-test \
-            --env "PORT=$MODULE_PORT" \
-            --env "APP_ENV=test" \
-            --env "DATABASE_URL=sqlite:////tmp/test.db" \
-            --env "PUBLISHER_MODE=mock" \
-            --env "EVENT_TRANSPORT=log" \
-            --env "MOCK_LATENCY_SECONDS=0" \
-            --env "SCHEDULER_ENABLED=false" \
-            --env "SESSION_SECRET_KEY=$JWT_SECRET" \
+          docker run -d --name module-under-test --network it-net \
+            -e PORT="$MODULE_PORT" -e APP_ENV -e DATABASE_URL \
+            -e PUBLISHER_MODE -e EVENT_TRANSPORT -e MOCK_LATENCY_SECONDS \
+            -e SCHEDULER_ENABLED -e SESSION_SECRET_KEY \
             pubtube-module-under-test:ci
-            sh -c 'alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8003'
 
-      - name: Start Gateway container
-        shell: bash
+          docker run -d --name gateway-under-test --network it-net \
+            -p 8000:8000 \
+            -e GATEWAY_PORT=8000 -e JWT_SECRET -e JWT_ALGORITHM=HS256 \
+            -e MODULE3_URL="http://module-under-test:$MODULE_PORT" \
+            "$GATEWAY_IMAGE"
+
+      - name: Smoke-test M3 through Gateway
         run: |
-          set -euo pipefail
+          retry=(--retry 30 --retry-delay 2 --retry-connrefused --retry-all-errors
+                 --retry-max-time 90 --fail --silent --show-error --output /dev/null)
 
-          gateway_env=(
-            --env GATEWAY_PORT=8000
-            --env "JWT_SECRET=$JWT_SECRET"
-            --env JWT_ALGORITHM=HS256
-            --env "MODULE3_URL=http://module-under-test:$MODULE_PORT"
-          )
-
-          docker run --detach \
-            --name gateway-under-test \
-            --network module-gateway-integration \
-            --publish 8000:8000 \
-            "${gateway_env[@]}" \
-            ghcr.io/tilininsano312/pubtube-mod4:develop
-
-      - name: Wait for module and Gateway health
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "=== Esperando Gateway ==="
-
-          gateway_ready=false
-
-          for attempt in $(seq 1 45); do
-            echo "Intento $attempt/45"
-
-            if curl --fail --silent --show-error \
-              http://127.0.0.1:8000/api/health \
-              --output /dev/null; then
-              gateway_ready=true
-              break
-            fi
-
-            sleep 2
-          done
-
-          if [[ "$gateway_ready" != true ]]; then
-            echo "Gateway no alcanzó estado saludable."
-
-            echo "=== Docker containers ==="
-            docker ps -a
-
-            echo "=== Gateway logs ==="
-            docker logs gateway-under-test || true
-
-            echo "=== Module 3 logs ==="
-            docker logs module-under-test || true
-
-            echo "=== PostgreSQL logs ==="
-            docker logs postgres-under-test || true
-
-            exit 1
-          fi
-
-          echo "Gateway saludable."
+          curl "${retry[@]}" http://127.0.0.1:8000/api/health
 
           token="$(docker exec gateway-under-test python -c \
             'import os,time,jwt; print(jwt.encode({"sub":"module-ci","user_id":"module-ci","role":"admin","exp":int(time.time())+300}, os.environ["JWT_SECRET"], algorithm="HS256"))')"
 
-          healthy=false
+          curl "${retry[@]}" \
+            -H "Authorization: Bearer $token" \
+            -H "X-Correlation-Id: module-ci-${GITHUB_RUN_ID}" \
+            "http://127.0.0.1:8000$GATEWAY_SMOKE_PATH"
 
-          for attempt in $(seq 1 45); do
-            if curl --fail --silent \
-              --header "Authorization: Bearer $token" \
-              --header "X-Correlation-Id: module-ci-${GITHUB_RUN_ID}" \
-              "http://127.0.0.1:8000/api/publish/health" \
-              --output /dev/null 2>/dev/null; then
-              healthy=true
-              break
-            fi
-
-            sleep 2
-          done
-
-          if [[ "$healthy" != true ]]; then
-            echo "Module 3 health check through Gateway failed."
-
-            echo "=== Gateway logs ==="
-            docker logs gateway-under-test || true
-
-            echo "=== Module 3 logs ==="
-            docker logs module-under-test || true
-
-            exit 1
-          fi
-
-          echo "Module 3 responde correctamente a través del Gateway."
+      - name: Show logs on failure
+        if: failure()
+        run: |
+          docker ps -a
+          docker logs module-under-test || true
+          docker logs gateway-under-test || true
 
       - name: Log in to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
@@ -179,36 +107,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up QEMU
-        if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
-        uses: docker/setup-buildx-action@v3
-
       - name: Publish M3 image
         if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
-        shell: bash
-        run: |
-          set -euo pipefail
-          image="ghcr.io/nahuelcatrileo/dpmod3-2026:develop"
-
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
-            --tag "$image" \
-            --push .
-
-      - name: Show containers and logs on failure
-        if: failure()
-        run: |
-          docker ps -a || true
-          docker logs module-under-test || true
-          docker logs gateway-under-test || true
-
-      - name: Clean up integration containers
-        if: always()
-        run: |
-          docker rm --force module-under-test gateway-under-test || true
-          docker network rm module-gateway-integration || true
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha
