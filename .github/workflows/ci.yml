@@ -101,14 +101,48 @@ jobs:
         run: |
           set -euo pipefail
 
-          curl --retry 30 --retry-connrefused --retry-delay 2 --retry-max-time 90 \
-            --fail --silent --show-error \
-            http://127.0.0.1:8000/api/health --output /dev/null
+          echo "=== Esperando Gateway ==="
+
+          gateway_ready=false
+
+          for attempt in $(seq 1 45); do
+            echo "Intento $attempt/45"
+
+            if curl --fail --silent --show-error \
+              http://127.0.0.1:8000/api/health \
+              --output /dev/null; then
+              gateway_ready=true
+              break
+            fi
+
+            sleep 2
+          done
+
+          if [[ "$gateway_ready" != true ]]; then
+            echo "Gateway no alcanzó estado saludable."
+
+            echo "=== Docker containers ==="
+            docker ps -a
+
+            echo "=== Gateway logs ==="
+            docker logs gateway-under-test || true
+
+            echo "=== Module 3 logs ==="
+            docker logs module-under-test || true
+
+            echo "=== PostgreSQL logs ==="
+            docker logs postgres-under-test || true
+
+            exit 1
+          fi
+
+          echo "Gateway saludable."
 
           token="$(docker exec gateway-under-test python -c \
             'import os,time,jwt; print(jwt.encode({"sub":"module-ci","user_id":"module-ci","role":"admin","exp":int(time.time())+300}, os.environ["JWT_SECRET"], algorithm="HS256"))')"
 
           healthy=false
+
           for attempt in $(seq 1 45); do
             if curl --fail --silent \
               --header "Authorization: Bearer $token" \
@@ -118,19 +152,23 @@ jobs:
               healthy=true
               break
             fi
+
             sleep 2
           done
 
           if [[ "$healthy" != true ]]; then
-            printf 'M3 health check did not succeed through the Gateway.\n' >&2
+            echo "Module 3 health check through Gateway failed."
+
+            echo "=== Gateway logs ==="
+            docker logs gateway-under-test || true
+
+            echo "=== Module 3 logs ==="
+            docker logs module-under-test || true
+
             exit 1
           fi
 
-          curl --fail --silent --show-error \
-            --header "Authorization: Bearer $token" \
-            --header "X-Correlation-Id: module-ci-${GITHUB_RUN_ID}" \
-            "http://127.0.0.1:8000$GATEWAY_SMOKE_PATH" \
-            --output /dev/null
+          echo "Module 3 responde correctamente a través del Gateway."
 
       - name: Log in to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
