@@ -51,6 +51,58 @@ def test_el_fallo_tambien_es_determinista():
     assert len(resultados) == 1
 
 
+# --- US-C5 · fallas transitorias controlables (MOCK_FAILURE_ATTEMPTS) --------
+
+
+def test_falla_las_primeras_n_veces_y_despues_publica():
+    """El caso central: un fallo transitorio que se cura solo, para poder
+    ensayar el ciclo completo falla -> backoff -> publish.completed."""
+    p = MockPublisher(
+        latency_seconds=0,
+        failure_rate=1.0,
+        failure_attempts=2,
+        error_code=ErrorCode.PUBLISH_FAILED,
+    )
+    primero = p.publish_video("c-001")
+    segundo = p.publish_video("c-001")
+    tercero = p.publish_video("c-001")
+
+    assert primero.success is False
+    assert primero.error_code is ErrorCode.PUBLISH_FAILED
+    assert segundo.success is False
+    assert tercero.success is True
+    assert tercero.youtube_video_id is not None
+
+
+def test_failure_attempts_cero_sigue_fallando_siempre():
+    """Comportamiento previo intacto: sin límite, los reintentos agotan."""
+    p = MockPublisher(latency_seconds=0, failure_rate=1.0, failure_attempts=0)
+    for _ in range(5):
+        assert p.publish_video("c-001").success is False
+
+
+def test_el_contador_de_fallos_es_por_content_id():
+    p = MockPublisher(
+        latency_seconds=0, failure_rate=1.0, failure_attempts=1, error_code=ErrorCode.PUBLISH_FAILED
+    )
+    assert p.publish_video("c-a").success is False
+    assert p.publish_video("c-b").success is False  # b todavía no falló
+    assert p.publish_video("c-a").success is True
+    assert p.publish_video("c-b").success is True
+
+
+def test_failure_attempts_por_defecto_viene_de_settings(monkeypatch):
+    """La política también se configura por variable de entorno."""
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "MOCK_FAILURE_ATTEMPTS", 1)
+    p = MockPublisher(latency_seconds=0, failure_rate=1.0, error_code=ErrorCode.PUBLISH_FAILED)
+
+    assert p.failure_attempts == 1
+    assert p.publish_video("c-env").success is False
+    assert p.publish_video("c-env").success is True
+
+
 def test_el_publicador_no_emite_eventos(events):
     """Criterio de aceptación: mock y real deben emitir lo mismo.
     Se cumple porque NINGUNO de los dos emite: emite services/publishing.py."""

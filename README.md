@@ -58,6 +58,7 @@ Estado actual: **107 tests, 95 % de cobertura**. El umbral de la DoD es 70 %.
 |---|---|---|
 | `PUBLISHER_MODE` | `mock` \| `youtube` | US-C4. Conmuta el publicador. `mock` no toca la red ni gasta cuota. |
 | `MOCK_FAILURE_RATE` | `0.0`–`1.0` | Fracción de `contentId` que fallan, de forma determinista. `1.0` fuerza el camino de error. |
+| `MOCK_FAILURE_ATTEMPTS` | int | US-C5. Veces que falla cada `contentId` antes de publicar. `0` = siempre (y los reintentos agotan); `1` = falla una vez y el reintento publica. |
 | `MOCK_LATENCY_SECONDS` | float | Latencia simulada. `0` en tests. |
 | `MOCK_FAILURE_CODE` | código registrado | US-C5. Código con el que falla el mock: `QUOTA_EXCEEDED` (diferible, default), `OAUTH_ERROR` (definitivo) o `PUBLISH_FAILED` (transitorio). |
 | `PUBLISH_MAX_ATTEMPTS` | int ≥ 1 | US-C5. Intentos por publicación antes de emitir `publish.failed`. |
@@ -118,6 +119,13 @@ desarrolló esa parte (Guía §4.6).
    `lastError: QUOTA_EXCEEDED: ...`, y en los logs
    `publicacion_reintento ... error_class=diferible delay_s=3600`. No se
    emite `publish.failed` hasta agotar los 3 intentos.
+
+   Variante **transitorio que se cura** (la más didáctica, sin esperar
+   minutos): reiniciar con
+   `MOCK_FAILURE_RATE=1.0 MOCK_FAILURE_ATTEMPTS=1 MOCK_FAILURE_CODE=PUBLISH_FAILED PUBLISH_RETRY_BACKOFF_SECONDS=5`.
+   El primer intento falla, a los 5 s el reintento publica:
+   `GET /status` queda en `published` con `attempts: 2` y hay un solo
+   `publish.completed`, sin ningún `publish.failed`.
 
 7. **Recuperación tras reinicio** (opcional, declarar que US-C2 va como
    esqueleto). Programar a +5 minutos, `docker compose restart module3`,

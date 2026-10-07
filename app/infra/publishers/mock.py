@@ -43,6 +43,7 @@ class MockPublisher(Publisher):
         latency_seconds: float | None = None,
         failure_rate: float | None = None,
         error_code: ErrorCode | None = None,
+        failure_attempts: int | None = None,
     ) -> None:
         settings = get_settings()
         self.latency_seconds = (
@@ -55,6 +56,14 @@ class MockPublisher(Publisher):
         # se ensayan los tres caminos en la demo: QUOTA_EXCEEDED (diferible),
         # PUBLISH_FAILED (transitorio) y OAUTH_ERROR (definitivo).
         self.error_code = settings.MOCK_FAILURE_CODE if error_code is None else error_code
+        # US-C5: cuántas veces falla cada contentId antes de publicar.
+        # 0 = sin límite (falla siempre); con N, el fallo se cura solo y el
+        # reintento publica. El contador es por instancia: get_publisher()
+        # devuelve un singleton, así que sobrevive entre reintentos.
+        self.failure_attempts = (
+            settings.MOCK_FAILURE_ATTEMPTS if failure_attempts is None else failure_attempts
+        )
+        self._fallos: dict[str, int] = {}
 
     def publish_video(self, content_id: str) -> PublishResult:
         logger.info("mock_publish_inicio content_id=%s", content_id)
@@ -63,18 +72,28 @@ class MockPublisher(Publisher):
             time.sleep(self.latency_seconds)
 
         if self.failure_rate > 0 and _bucket(content_id) < self.failure_rate:
-            logger.warning(
-                "mock_publish_fallo content_id=%s error_code=%s",
-                content_id,
-                self.error_code.value,
-            )
-            return PublishResult.failure(
-                self.error_code,
-                _MOTIVOS.get(
+            fallos = self._fallos.get(content_id, 0)
+            if self.failure_attempts > 0 and fallos >= self.failure_attempts:
+                logger.info(
+                    "mock_publish_se_curo content_id=%s fallos_previos=%s",
+                    content_id,
+                    fallos,
+                )
+            else:
+                self._fallos[content_id] = fallos + 1
+                logger.warning(
+                    "mock_publish_fallo content_id=%s error_code=%s fallo_n=%s",
+                    content_id,
+                    self.error_code.value,
+                    self._fallos[content_id],
+                )
+                return PublishResult.failure(
                     self.error_code,
-                    f"Fallo simulado por el publicador mock ({self.error_code.value})",
-                ),
-            )
+                    _MOTIVOS.get(
+                        self.error_code,
+                        f"Fallo simulado por el publicador mock ({self.error_code.value})",
+                    ),
+                )
 
         video_id = self.fake_video_id(content_id)
         logger.info(

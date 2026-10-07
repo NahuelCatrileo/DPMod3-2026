@@ -162,6 +162,43 @@ def test_un_intento_exitoso_tras_reintentos_publica(session, events, monkeypatch
         set_publisher(None)
 
 
+def test_fallo_controlado_que_se_cura_publica_en_el_reintento(session, events, monkeypatch):
+    """MOCK_FAILURE_ATTEMPTS=1: el mock falla la primera vez y en el
+    reintento publica. Ciclo transitorio completo sin tocar el publicador
+    a mano."""
+    _capturar_jobs({}, monkeypatch)
+    set_publisher(
+        MockPublisher(
+            latency_seconds=0,
+            failure_rate=1.0,
+            failure_attempts=1,
+            error_code=ErrorCode.PUBLISH_FAILED,
+        )
+    )
+    try:
+        pub = _crear_pendiente(session, "c-r6")
+        events.clear()
+
+        execute_publication(pub.id)  # falla -> pending con reintento
+
+        session.expire_all()
+        fallando = session.get(Publication, pub.id)
+        assert fallando.state == "pending"
+        assert fallando.attempts == 1
+        assert fallando.last_error.startswith(ErrorCode.PUBLISH_FAILED.value)
+
+        execute_publication(pub.id)  # reintento -> publica
+
+        session.expire_all()
+        publicada = session.get(Publication, pub.id)
+        assert publicada.state == "published"
+        assert publicada.attempts == 2
+        assert len(events.events_of_type("publish.completed")) == 1
+        assert events.events_of_type("publish.failed") == []
+    finally:
+        set_publisher(None)
+
+
 def test_excepcion_del_publicador_es_transitorio(session, events, monkeypatch):
     """Una excepción no controlada también clasifica como transitorio."""
     _capturar_jobs({}, monkeypatch)

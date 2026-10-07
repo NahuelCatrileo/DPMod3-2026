@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     # 0.0 = el mock nunca falla. 0.2 = ~20% de los contentId fallan,
     # de forma DETERMINISTA (mismo contentId -> mismo resultado siempre).
     MOCK_FAILURE_RATE: float = 0.0
+    # Cuántas veces falla cada contentId ANTES de publicar (US-C5).
+    # 0 = sin límite: si cae en la fracción de failure_rate, falla siempre
+    # y los reintentos agotan hasta publish.failed. Con 1, 2, ... el fallo
+    # es TRANSITORIO de verdad: falla las primeras N veces y en el
+    # reintento siguiente publica. El contador vive en la instancia del
+    # mock (el publicador es un singleton, factory.get_publisher).
+    MOCK_FAILURE_ATTEMPTS: int = Field(default=0, ge=0)
 
     # --- Transporte de eventos -------------------------------------------
     # log  -> doble de prueba: escribe el envelope a stdout y a memoria
