@@ -41,12 +41,12 @@ os.environ.update(
 from datetime import datetime, timedelta, timezone  # noqa: E402
 
 import app.infra.models  # noqa: F401,E402
+from app.domain.errors import ErrorCode  # noqa: E402
 from app.infra.db import Base, SessionLocal, engine  # noqa: E402
 from app.infra.events.publisher import (  # noqa: E402
     LogEventPublisher,
     set_event_publisher,
 )
-from app.domain.errors import ErrorCode  # noqa: E402
 from app.infra.publishers.factory import set_publisher  # noqa: E402
 from app.infra.publishers.mock import MockPublisher  # noqa: E402
 from app.services.publishing import execute_publication  # noqa: E402
