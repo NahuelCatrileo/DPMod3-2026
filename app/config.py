@@ -7,7 +7,10 @@ deben poder sobrescribirse desde .env / docker-compose.
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.domain.errors import ErrorCode
 
 
 class Settings(BaseSettings):
@@ -50,6 +53,23 @@ class Settings(BaseSettings):
     # Cada cuánto se reconcilia la tabla publication con el job store
     # (ADR-0004). Además corre una vez al arrancar.
     SCHEDULER_RECONCILE_SECONDS: int = 60
+
+    # --- US-C5: política de reintentos y clasificación de errores ----------
+    # Intentos totales (el primero + los reintentos) antes de declarar el
+    # fallo definitivo y emitir publish.failed.
+    PUBLISH_MAX_ATTEMPTS: int = Field(default=3, ge=1)
+    # Backoff para errores TRANSITORIOS. Exponencial: con 60 los reintentos
+    # caen a los 60 s, 120 s, 240 s... desde el intento anterior.
+    PUBLISH_RETRY_BACKOFF_SECONDS: int = Field(default=60, ge=0)
+    # Delay para errores DIFERIBLES (cuota). La cuota de la YouTube Data API
+    # se restablece por ventana, no por minuto: reintentar cada minuto solo
+    # consume cuota en llamadas que van a fallar igual.
+    PUBLISH_QUOTA_RETRY_SECONDS: int = Field(default=3600, ge=0)
+    # Código con el que MOCK_FAILURE_RATE simula el fallo. Permite ensayar
+    # los tres caminos en la demo: OAUTH_ERROR (definitivo, falla ya),
+    # PUBLISH_FAILED (transitorio, reintenta con backoff) o QUOTA_EXCEEDED
+    # (diferible, reintenta con delay de cuota).
+    MOCK_FAILURE_CODE: ErrorCode = ErrorCode.QUOTA_EXCEEDED
 
     # --- OAuth / YouTube (Sprint 3, US-C3) --------------------------------
     GOOGLE_CLIENT_SECRETS_FILE: str = "credentials/client_secret.json"
