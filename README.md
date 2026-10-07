@@ -29,6 +29,11 @@ Documentación interactiva: <http://localhost:8000/docs>
 > `.env` **no se versiona**. Genere `SESSION_SECRET_KEY` con
 > `openssl rand -hex 32` y cambie `POSTGRES_PASSWORD`.
 
+Las rutas `/api/publish/*` exigen `Authorization: Bearer <jwt>` (ADR-0005).
+`JWT_SECRET_KEY` debe ser la misma clave con la que firma el API Gateway.
+Para probar en local, genere un token con
+`python scripts/generar_jwt.py` y péguelo en Authorize, en `/docs`.
+
 ## Correr los tests
 
 ```bash

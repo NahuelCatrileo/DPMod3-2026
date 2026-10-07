@@ -11,6 +11,8 @@ El uso de IA está permitido; lo que se sanciona es no declararlo.
 | S2 | Claude | US-C2: diagnóstico del scheduler contra los criterios de aceptación y borrador del código de reconciliación tras reinicio y de cancelación (TECH-C2.4) | *(completar)* | *(completar)* |
 | S2 | Claude | US-C2: borrador de las pruebas de disparo, cancelación y reinicio (TECH-C2.5 y TECH-C2.6). La herramienta ejecutó la suite y comprobó que las pruebas fallan si se desactiva la reconciliación o la cancelación | *(completar)* | *(completar)* |
 | S2 | Claude | Redacción del borrador de ADR-0004 (estado Propuesta) | *(completar: quién revisó la decisión de marcar fallidas las publicaciones vencidas)* | *(completar)* |
+| S2 | Claude | Borrador de la verificación JWT de la API (`app/api/auth.py`), de sus pruebas (`tests/test_auth_jwt.py`) y del script `scripts/generar_jwt.py`. La herramienta ejecutó la suite completa | *(completar: quién revisó el código y acordó la clave y los claims con Equipo D)* | *(completar)* |
+| S2 | Claude | Redacción del borrador de ADR-0005 (estado Propuesta) | *(completar: quién revisó la decisión de verificar el JWT también en el módulo)* | *(completar)* |
 
 > **Antes de entregar esto, léanlo de nuevo.** Las columnas vacías son suyas
 > y no las puede llenar la herramienta. La regla práctica del Review es que si

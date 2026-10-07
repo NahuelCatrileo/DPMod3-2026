@@ -11,6 +11,7 @@ os.environ.setdefault("MOCK_LATENCY_SECONDS", "0")
 os.environ.setdefault("MOCK_FAILURE_RATE", "0")
 os.environ.setdefault("SCHEDULER_ENABLED", "false")
 os.environ.setdefault("SESSION_SECRET_KEY", "test-secret")
+os.environ.setdefault("JWT_SECRET_KEY", "test-jwt-secret-de-al-menos-32-bytes")
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -56,12 +57,36 @@ def session():
     s.close()
 
 
+def make_token(**overrides) -> str:
+    """JWT válido para la configuración de test; `overrides` cambia claims."""
+    from datetime import datetime, timedelta, timezone
+
+    import jwt
+
+    from app.config import get_settings
+
+    settings = get_settings()
+    ahora = datetime.now(timezone.utc)
+    claims = {"sub": "test", "iat": ahora, "exp": ahora + timedelta(minutes=5)}
+    claims.update(overrides)
+    claims = {k: v for k, v in claims.items() if v is not None}
+    return jwt.encode(claims, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+
+
 @pytest.fixture
-def client(events, publisher):
+def anon_client(events, publisher):
+    """Cliente sin cabecera Authorization (para probar el 401)."""
     from app.main import app
 
     with TestClient(app) as c:
         yield c
+
+
+@pytest.fixture
+def client(anon_client):
+    """Cliente autenticado con un JWT válido (ADR-0005)."""
+    anon_client.headers["Authorization"] = f"Bearer {make_token()}"
+    yield anon_client
 
 
 # --- US-C2 · Scheduler real (APScheduler + job store en la base de test) ----
