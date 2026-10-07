@@ -18,25 +18,45 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
+from app.domain.classification import FailureKind
 from app.domain.errors import ErrorCode
 
 
 @dataclass(frozen=True)
 class PublishResult:
-    """Resultado de un intento de publicación."""
+    """Resultado de un intento de publicación.
+
+    Satisface `ClassifiableResult` (app/domain/classification.py), que es la
+    vista mínima que consume `classify` para decidir la categoría del fallo.
+    """
 
     success: bool
     youtube_video_id: str | None = None
     error_code: ErrorCode | None = None
     reason: str | None = None
+    # US-C5.1: naturaleza del fallo por debajo del código, necesaria porque
+    # PUBLISH_FAILED es genérico. Campo opcional y al final a propósito: no
+    # rompe a quien construye el resultado con los cuatro campos de US-C4, y no
+    # viaja en `publish.failed`, así que el contrato de eventos no cambia.
+    failure_kind: FailureKind | None = None
 
     @classmethod
     def ok(cls, youtube_video_id: str) -> PublishResult:
         return cls(success=True, youtube_video_id=youtube_video_id)
 
     @classmethod
-    def failure(cls, error_code: ErrorCode, reason: str) -> PublishResult:
-        return cls(success=False, error_code=error_code, reason=reason)
+    def failure(
+        cls,
+        error_code: ErrorCode,
+        reason: str,
+        failure_kind: FailureKind | None = None,
+    ) -> PublishResult:
+        return cls(
+            success=False,
+            error_code=error_code,
+            reason=reason,
+            failure_kind=failure_kind,
+        )
 
 
 class Publisher(ABC):

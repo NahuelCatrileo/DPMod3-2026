@@ -43,7 +43,7 @@ pytest --cov=app --cov-report=term-missing
 ruff check app tests
 ```
 
-Estado actual: **38 tests, 88 % de cobertura**. El umbral de la DoD es 70 %.
+Estado actual: **102 tests, 89,6 % de cobertura**. El umbral de la DoD es 70 %.
 
 ---
 
@@ -132,7 +132,7 @@ app/
 ├── config.py              Configuración por entorno (12-factor)
 ├── main.py                FastAPI + lifespan que arranca el scheduler
 ├── api/                   Rutas, schemas y sobre de error estándar
-├── domain/                Máquina de estados y códigos de error registrados
+├── domain/                Máquina de estados, códigos de error y clasificación de errores (US-C5.1)
 ├── infra/
 │   ├── db.py models.py    Persistencia (tabla publication, Doc 3 §6)
 │   ├── events/            Envelope + publicador de eventos (doble y AMQP)

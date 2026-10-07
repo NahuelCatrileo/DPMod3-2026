@@ -26,10 +26,14 @@ class YouTubePublisher(Publisher):
         #   1. Cargar credenciales OAuth y refrescarlas si expiraron.
         #   2. Obtener del Módulo 1 los metadatos y la URL del archivo.
         #   3. Llamar a youtube.videos().insert(...) con MediaFileUpload.
-        #   4. Mapear errores de la API (US-C5):
-        #        403 quotaExceeded        -> QUOTA_EXCEEDED   (transitorio)
-        #        401 / invalid_grant      -> OAUTH_ERROR      (definitivo)
-        #        5xx / socket timeout     -> PUBLISH_FAILED   (transitorio)
+        #   4. Mapear errores de la API a un código registrado (Doc 1 §6.3) y a
+        #      su naturaleza. La categoría final la decide US-C5.1 con
+        #      classify() (app/domain/classification.py); aquí solo se describe
+        #      el fallo:
+        #        403 quotaExceeded    -> QUOTA_EXCEEDED               (diferible)
+        #        401 / invalid_grant  -> OAUTH_ERROR                  (definitivo, ADR-0005)
+        #        5xx / socket timeout -> PUBLISH_FAILED + NETWORK/TIMEOUT/HTTP_5XX
+        #        otro 4xx             -> PUBLISH_FAILED + HTTP_4XX    (definitivo)
         logger.error("YouTubePublisher todavía no está implementado (US-C3, Sprint 3)")
         return PublishResult.failure(
             ErrorCode.PUBLISH_FAILED,
