@@ -11,10 +11,14 @@ from datetime import datetime
 from datetime import timezone as dt_timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from app.domain.errors import InvalidScheduleDataError, ScheduleConflictError
+from app.domain.errors import (
+    InvalidScheduleDataError,
+    PublicationNotFoundError,
+    ScheduleConflictError,
+)
 from app.domain.states import ACTIVE_STATES, PublishState
 from app.infra.events import build_envelope, payload_publish_scheduled
 from app.infra.events.publisher import get_event_publisher
@@ -132,3 +136,48 @@ def schedule_publication(
 
 def get_publication(session: Session, publish_id: str) -> Publication | None:
     return session.get(Publication, publish_id)
+
+
+def cancel_publication(session: Session, publish_id: str) -> Publication:
+    """US-C2 · Subtarea 2.2 — Cancela una publicación programada.
+
+    Primero cambia el estado (pending -> cancelled, con UPDATE condicional) y
+    después quita el job. Si el job se disparara entre medio, el handler no
+    podría tomar la publicación porque ya no está en 'pending'.
+
+    Sin endpoint REST ni evento: ninguno de los dos está en el contrato y
+    agregarlos requiere el procedimiento de la Guía §5.4.
+    """
+    publication = session.get(Publication, publish_id)
+    if publication is None:
+        raise PublicationNotFoundError(publish_id)
+
+    result = session.execute(
+        update(Publication)
+        .where(
+            Publication.id == publish_id,
+            Publication.state == PublishState.PENDING.value,
+        )
+        .values(
+            state=PublishState.CANCELLED.value,
+            updated_at=datetime.now(dt_timezone.utc),
+        )
+    )
+    session.commit()
+    session.refresh(publication)
+    if result.rowcount != 1:
+        raise ScheduleConflictError(
+            f"La publicación {publish_id} no se puede cancelar: "
+            f"está en estado '{publication.state}'."
+        )
+
+    from app.scheduler.scheduler import cancel_job
+
+    cancel_job(publish_id)
+    logger.info(
+        "publicacion_cancelada publish_id=%s content_id=%s correlationId=%s",
+        publication.id,
+        publication.content_id,
+        publication.correlation_id,
+    )
+    return publication

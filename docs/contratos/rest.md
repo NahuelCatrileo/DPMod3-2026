@@ -15,6 +15,10 @@ cada PR que toque una firma.
 | `GET /api/health` | — | `200 { status, data }` | — |
 | `POST /api/publish/{id}/now` | — | **No implementado** (US-C7, Could, Sprint 4) | US-C7 |
 
+Todas las rutas `/api/publish/*` exigen la cabecera
+`Authorization: Bearer <jwt>` (ADR-0005). El token lo emite el API Gateway
+(Equipo D) y este módulo solo lo verifica. `GET /api/health` queda público.
+
 Cabecera opcional `X-Correlation-Id`: si viene, se propaga a la publicación y
 a todos sus eventos. Si no, generamos uno.
 
@@ -33,6 +37,7 @@ a todos sus eventos. Si no, generamos uno.
 | Zona horaria inexistente | 422 | `INVALID_METADATA` |
 | Campo faltante o mal formado | 422 | `INVALID_METADATA` |
 | `publishId` inexistente | 404 | `CONTENT_NOT_FOUND` |
+| Falta el JWT, está vencido, mal firmado o sin `sub`/`exp` | 401 | `UNAUTHORIZED` |
 
 > **Decisión que conviene declarar en el Review.** La lista registrada no tiene
 > un código para "dato de entrada inválido" en publicación. Usamos

@@ -8,6 +8,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Header, status
 from sqlalchemy.orm import Session
 
+from app.api.auth import require_jwt
 from app.api.schemas import (
     ErrorResponse,
     ScheduleRequest,
@@ -18,7 +19,13 @@ from app.domain.errors import PublicationNotFoundError
 from app.infra.db import get_session
 from app.services import scheduling
 
-router = APIRouter(prefix="/api/publish", tags=["publish"])
+# Todas las rutas de publicación exigen un JWT válido (ADR-0005).
+router = APIRouter(
+    prefix="/api/publish",
+    tags=["publish"],
+    dependencies=[Depends(require_jwt)],
+    responses={401: {"model": ErrorResponse, "description": "UNAUTHORIZED"}},
+)
 
 _ERROR_RESPONSES = {
     409: {"model": ErrorResponse, "description": "SCHEDULE_CONFLICT"},

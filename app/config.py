@@ -47,12 +47,27 @@ class Settings(BaseSettings):
     # ejecuta igual si el atraso es menor a este margen (en segundos).
     SCHEDULER_MISFIRE_GRACE_SECONDS: int = 3600
     SCHEDULER_TIMEZONE: str = "UTC"
+    # Cada cuánto se reconcilia la tabla publication con el job store
+    # (ADR-0004). Además corre una vez al arrancar.
+    SCHEDULER_RECONCILE_SECONDS: int = 60
 
     # --- OAuth / YouTube (Sprint 3, US-C3) --------------------------------
     GOOGLE_CLIENT_SECRETS_FILE: str = "credentials/client_secret.json"
     GOOGLE_TOKEN_FILE: str = "credentials/token.json"
     OAUTH_REDIRECT_URI: str = "http://localhost:8000/oauth2/callback"
     SESSION_SECRET_KEY: str = "cambiame-en-.env"
+
+    # --- Autenticación de la API con JWT (ADR-0005) ------------------------
+    # Los tokens los emite el API Gateway (Equipo D, US-D1). Este módulo solo
+    # los verifica, con la misma clave compartida. El default no sirve fuera
+    # de desarrollo: en .env va uno generado con `openssl rand -hex 32`.
+    JWT_SECRET_KEY: str = "cambiame-en-.env"
+    JWT_ALGORITHM: str = "HS256"
+    # Si se completan, el token debe traer exactamente estos `iss` / `aud`.
+    JWT_ISSUER: str | None = None
+    JWT_AUDIENCE: str | None = None
+    # Tolerancia de reloj entre el gateway y este módulo, en segundos.
+    JWT_LEEWAY_SECONDS: int = 30
 
 
 @lru_cache

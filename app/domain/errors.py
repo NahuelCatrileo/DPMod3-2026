@@ -30,10 +30,17 @@ class DomainError(Exception):
         { "status": "error", "code": "...", "message": "..." }
     """
 
-    def __init__(self, code: ErrorCode, message: str, http_status: int = 400) -> None:
+    def __init__(
+        self,
+        code: ErrorCode,
+        message: str,
+        http_status: int = 400,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         self.code = code
         self.message = message
         self.http_status = http_status
+        self.headers = headers
         super().__init__(message)
 
 
@@ -55,4 +62,16 @@ class PublicationNotFoundError(DomainError):
             ErrorCode.CONTENT_NOT_FOUND,
             f"No existe la publicación {publish_id}",
             http_status=404,
+        )
+
+
+class UnauthorizedError(DomainError):
+    """Falta el token JWT o no es válido (ADR-0005)."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(
+            ErrorCode.UNAUTHORIZED,
+            message,
+            http_status=401,
+            headers={"WWW-Authenticate": "Bearer"},
         )
