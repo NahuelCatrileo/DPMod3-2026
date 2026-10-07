@@ -70,6 +70,15 @@ No publicamos un evento por cada intento fallido:
 El mapeo completo clase ↔ códigos está en `ADR/0006-clasificacion-errores-reintentos.md`.
 **Los esquemas no cambian** (Guía §5.4): mismos eventos, mismos campos.
 
+> **Punto a confirmar en la reunión de integración.**
+> Emitimos `publish.failed` **solo al final**: una única vez, cuando el
+> fallo ya es definitivo o se agotaron los intentos — nunca un evento por
+> intento fallido. Es nuestra lectura de "fallida definitiva" del catálogo
+> Doc 1 §6.3, y es lo que cubren las pruebas (`attempt` llega con el
+> número de intentos consumidos). **Pregunta para Equipo D:** ¿se confirma
+> esta semántica o esperan el evento con el primer fallo (eso sí sería un
+> cambio de esquema bajo §5.4)?
+
 ## Eventos que consumimos
 
 | Routing key | Emisor | Estado |

@@ -151,11 +151,13 @@ acta (Guía §5.4). No se resuelven por decisión unilateral.
 2. **Payload de `metadata.updated`.** No está definido qué hacemos al
    recibirlo. Acordar con Equipo A antes del Sprint 2.
 
-3. **`publish.failed` diferido (US-C5).** Los errores transitorios y de cuota
-   se reintenta hasta 3 veces antes de declarar el fallo, así que con la
-   config por defecto el evento llega varios minutos después del primer
-   error. **No cambia ningún esquema** (mismos campos y códigos), pero sí el
-   momento: declararlo en la reunión por si Equipo D asume fallo inmediato.
+3. **`publish.failed` ¿solo al final? (US-C5).** Nosotros lo emitimos
+   **una sola vez**, cuando el fallo es definitivo o se agotaron los
+   intentos (hasta 3, con backoff): nunca un evento por intento. Con la
+   config por defecto eso llega varios minutos después del primer error.
+   **No cambia ningún esquema** (mismos campos y códigos), solo el
+   momento. Confirmar en la reunión con Equipo D: ¿se asume "solo al
+   final" o esperan el evento con el primer fallo?
 
 ---
 
