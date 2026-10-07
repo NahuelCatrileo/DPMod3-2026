@@ -111,15 +111,71 @@ def test_pendiente_atrasada_dentro_del_margen_sin_job_se_dispara_ya(session, eve
     assert pausado.get_job(job_id_for(pub.id)).next_run_time == AHORA
 
 
-def test_publishing_al_arrancar_pasa_a_failed(session, events, pausado):
+def test_pendiente_esperando_reintento_no_vence_y_usa_el_backoff(session, events, pausado):
+    """US-C5: con attempts > 0 la fila no está 'vencida', espera su
+    reintento. Si se pierde el job, se recrea con updated_at + backoff
+    (transitorio), no con schedule_at, que quedó viejo."""
+    pub = fila(session, PublishState.PENDING, AHORA - timedelta(days=2), attempts=1)
+    pub.updated_at = AHORA - timedelta(seconds=10)
+    session.commit()
+
+    reporte = reconcile_publications(now=AHORA)
+
+    assert reporte.vencidas == []
+    assert reporte.reprogramadas == [pub.id]
+    backoff = timedelta(seconds=get_settings().PUBLISH_RETRY_BACKOFF_SECONDS)
+    assert pausado.get_job(job_id_for(pub.id)).next_run_time == pub.updated_at + backoff
+    assert events.published == []
+
+
+def test_pendiente_reintentando_con_error_de_cuota_usa_su_delay(session, events, pausado):
+    """El delay se deduce de la clase del último error guardado en last_error."""
+    pub = fila(session, PublishState.PENDING, AHORA - timedelta(days=2), attempts=2)
+    pub.updated_at = AHORA
+    pub.last_error = "QUOTA_EXCEEDED: has superado la cuota de publicaciones"
+    session.commit()
+
+    reporte = reconcile_publications(now=AHORA)
+
+    assert reporte.vencidas == []
+    assert reporte.reprogramadas == [pub.id]
+    cuota = timedelta(seconds=get_settings().PUBLISH_QUOTA_RETRY_SECONDS)
+    assert pausado.get_job(job_id_for(pub.id)).next_run_time == AHORA + cuota
+    assert events.published == []
+
+
+def test_publishing_al_arrancar_vuelve_a_pending_para_reintentar(session, events, pausado):
+    """US-C5: la interrupción es transitorio; quedan intentos, así que la
+    publicación se reencola en vez de fallar."""
     pub = fila(session, PublishState.PUBLISHING, AHORA - timedelta(minutes=1), attempts=1)
 
     reporte = reconcile_publications(now=AHORA, startup=True)
 
     assert reporte.interrumpidas == [pub.id]
+    assert reporte.reprogramadas == [pub.id]
+    assert estado(session, pub.id) == PublishState.PENDING.value
+    assert pausado.get_job(job_id_for(pub.id)) is not None
+    assert events.published == []
+
+
+def test_publishing_al_arrancar_sin_intentos_disponibles_pasa_a_failed(
+    session, events, pausado
+):
+    """Con el límite agotado, la interrupción termina como en ADR-0004."""
+    pub = fila(
+        session,
+        PublishState.PUBLISHING,
+        AHORA - timedelta(minutes=1),
+        attempts=get_settings().PUBLISH_MAX_ATTEMPTS,
+    )
+
+    reporte = reconcile_publications(now=AHORA, startup=True)
+
+    assert reporte.interrumpidas == [pub.id]
+    assert reporte.reprogramadas == []
     assert estado(session, pub.id) == PublishState.FAILED.value
     (evento,) = events.events_of_type("publish.failed")
-    assert evento["payload"]["attempt"] == 1
+    assert evento["payload"]["attempt"] == get_settings().PUBLISH_MAX_ATTEMPTS
 
 
 def test_publishing_en_la_ronda_periodica_no_se_toca(session, events, pausado):
@@ -148,7 +204,14 @@ def test_estados_terminales_no_se_tocan(session, events, pausado, terminal):
 
 def test_reconciliar_dos_veces_emite_un_solo_evento(session, events, pausado):
     fila(session, PublishState.PENDING, AHORA - timedelta(days=1))
-    fila(session, PublishState.PUBLISHING, AHORA - timedelta(minutes=1), attempts=1)
+    # Intentos agotados: es la única forma de que una interrupción termine
+    # en failed (si no, US-C5 la reencola y no emite evento).
+    fila(
+        session,
+        PublishState.PUBLISHING,
+        AHORA - timedelta(minutes=1),
+        attempts=get_settings().PUBLISH_MAX_ATTEMPTS,
+    )
 
     reconcile_publications(now=AHORA, startup=True)
     reconcile_publications(now=AHORA, startup=True)
