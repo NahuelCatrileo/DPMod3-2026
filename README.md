@@ -48,7 +48,7 @@ pytest --cov=app --cov-report=term-missing
 ruff check app tests
 ```
 
-Estado actual: **107 tests, 95 % de cobertura**. El umbral de la DoD es 70 %.
+Estado actual: **117 tests, 95 % de cobertura**. El umbral de la DoD es 70 %.
 
 ---
 
