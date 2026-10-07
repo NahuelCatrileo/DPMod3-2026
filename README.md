@@ -48,7 +48,7 @@ pytest --cov=app --cov-report=term-missing
 ruff check app tests
 ```
 
-Estado actual: **38 tests, 88 % de cobertura**. El umbral de la DoD es 70 %.
+Estado actual: **107 tests, 95 % de cobertura**. El umbral de la DoD es 70 %.
 
 ---
 
@@ -59,6 +59,10 @@ Estado actual: **38 tests, 88 % de cobertura**. El umbral de la DoD es 70 %.
 | `PUBLISHER_MODE` | `mock` \| `youtube` | US-C4. Conmuta el publicador. `mock` no toca la red ni gasta cuota. |
 | `MOCK_FAILURE_RATE` | `0.0`–`1.0` | Fracción de `contentId` que fallan, de forma determinista. `1.0` fuerza el camino de error. |
 | `MOCK_LATENCY_SECONDS` | float | Latencia simulada. `0` en tests. |
+| `MOCK_FAILURE_CODE` | código registrado | US-C5. Código con el que falla el mock: `QUOTA_EXCEEDED` (diferible, default), `OAUTH_ERROR` (definitivo) o `PUBLISH_FAILED` (transitorio). |
+| `PUBLISH_MAX_ATTEMPTS` | int ≥ 1 | US-C5. Intentos por publicación antes de emitir `publish.failed`. |
+| `PUBLISH_RETRY_BACKOFF_SECONDS` | int | US-C5. Base del backoff para errores transitorios (60 → 120 → 240…). |
+| `PUBLISH_QUOTA_RETRY_SECONDS` | int | US-C5. Espera fija para `QUOTA_EXCEEDED` (la cuota se restablece por ventana). |
 | `EVENT_TRANSPORT` | `log` \| `amqp` | `log` es el doble de prueba. `amqp` publica a RabbitMQ. |
 | `SCHEDULER_ENABLED` | bool | Apagar en tests. |
 | `SCHEDULER_MISFIRE_GRACE_SECONDS` | int | Margen para ejecutar jobs atrasados tras un reinicio. |
@@ -71,13 +75,15 @@ Estado actual: **38 tests, 88 % de cobertura**. El umbral de la DoD es 70 %.
 |---|---|---|---|
 | US-C4 · Publicador simulado conmutable | 3 | **Completa** | — |
 | US-C1 · Programar publicación | 5 | **Completa** | — |
-| US-C2 · Scheduler de publicaciones | 8 | **Esqueleto — no comprometida** | Cancelación de jobs, política de reintentos (US-C5), pruebas de integración con reinicio real de contenedor |
+| US-C2 · Scheduler de publicaciones | 8 | **Esqueleto — no comprometida** | Cancelación de jobs, pruebas de integración con reinicio real de contenedor |
+| US-C5 · Manejo de cuotas y errores | 5 | **Completa (adelantada)** | — |
 | US-C6 · Máquina de estados | 3 | Parcial (adelantada) | Formalizar en Sprint 2 |
 | US-C3 · YouTube real | 8 | Esqueleto | Sprint 3 |
 | US-C7 · Reintento manual | 3 | No iniciada | Sprint 4 |
 
 **Comprometido en el Sprint 1: 8 SP** (US-C4 + US-C1), igual que el Plan de
 Release del Doc 2 §7. El esqueleto del scheduler es tarea técnica, no historia.
+US-C5 está en el backlog de Sprint 3 pero se entrega adelantada en este branch.
 
 ---
 
@@ -101,10 +107,19 @@ desarrolló esa parte (Guía §4.6).
    `pending` a `published` y el evento `publish.completed` con el mismo
    `correlationId` que el paso 2.
 
-5. **Camino de error.** Reiniciar con `MOCK_FAILURE_RATE=1.0`, programar de
-   nuevo y mostrar `failed` + `publish.failed` con `errorCode: QUOTA_EXCEEDED`.
+5. **Camino de error (fallo definitivo).** Reiniciar con
+   `MOCK_FAILURE_RATE=1.0 MOCK_FAILURE_CODE=OAUTH_ERROR`, programar de nuevo
+   y mostrar `failed` + `publish.failed` con `errorCode: OAUTH_ERROR` y
+   `attempt: 1`: al ser definitivo, no se reintenta.
 
-6. **Recuperación tras reinicio** (opcional, declarar que US-C2 va como
+6. **US-C5 · Reintentos.** Con `MOCK_FAILURE_RATE=1.0` y el default
+   `MOCK_FAILURE_CODE=QUOTA_EXCEEDED`, programar otra vez. Mostrar
+   `GET /status` en `pending` con `attempts: 1` y
+   `lastError: QUOTA_EXCEEDED: ...`, y en los logs
+   `publicacion_reintento ... error_class=diferible delay_s=3600`. No se
+   emite `publish.failed` hasta agotar los 3 intentos.
+
+7. **Recuperación tras reinicio** (opcional, declarar que US-C2 va como
    esqueleto). Programar a +5 minutos, `docker compose restart module3`,
    y mostrar en `/api/health` que `pendingJobs` sigue en 1.
 
@@ -117,8 +132,8 @@ desarrolló esa parte (Guía §4.6).
 
 ## Puntos abiertos de contrato
 
-Ambos van a la reunión de integración del jueves y deben quedar en acta
-(Guía §5.4). No se resuelven por decisión unilateral.
+Los puntos 1 y 2 van a la reunión de integración del jueves y deben quedar en
+acta (Guía §5.4). No se resuelven por decisión unilateral.
 
 1. **Campo `source` en el envelope.** El Doc 3 §3.1 lo incluye y el
    `event_store` del M2 tiene esa columna; el Doc 1 §6.3 lo omite. Nosotros lo
@@ -127,6 +142,12 @@ Ambos van a la reunión de integración del jueves y deben quedar en acta
 
 2. **Payload de `metadata.updated`.** No está definido qué hacemos al
    recibirlo. Acordar con Equipo A antes del Sprint 2.
+
+3. **`publish.failed` diferido (US-C5).** Los errores transitorios y de cuota
+   se reintenta hasta 3 veces antes de declarar el fallo, así que con la
+   config por defecto el evento llega varios minutos después del primer
+   error. **No cambia ningún esquema** (mismos campos y códigos), pero sí el
+   momento: declararlo en la reunión por si Equipo D asume fallo inmediato.
 
 ---
 

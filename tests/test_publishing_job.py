@@ -73,8 +73,12 @@ def test_job_es_idempotente(session, events, publisher):
     assert len(events.events_of_type("publish.completed")) == 1
 
 
-def test_fallo_del_publicador_emite_publish_failed(session, events):
-    set_publisher(MockPublisher(latency_seconds=0, failure_rate=1.0))
+def test_fallo_definitivo_emite_publish_failed_al_primer_intento(session, events):
+    """US-C5: un error DEFINITIVO no se reintenta: falla ya y emite el
+    evento con la causa. El camino transitorio lo cubre test_retry_policy."""
+    set_publisher(
+        MockPublisher(latency_seconds=0, failure_rate=1.0, error_code=ErrorCode.OAUTH_ERROR)
+    )
     try:
         pub = _crear_pendiente(session, events, "c-102")
         events.clear()
@@ -84,7 +88,8 @@ def test_fallo_del_publicador_emite_publish_failed(session, events):
         session.expire_all()
         actualizada = session.get(Publication, pub.id)
         assert actualizada.state == PublishState.FAILED.value
-        assert actualizada.last_error.startswith(ErrorCode.QUOTA_EXCEEDED.value)
+        assert actualizada.attempts == 1
+        assert actualizada.last_error.startswith(ErrorCode.OAUTH_ERROR.value)
 
         fallidos = events.events_of_type("publish.failed")
         assert len(fallidos) == 1
@@ -94,7 +99,7 @@ def test_fallo_del_publicador_emite_publish_failed(session, events):
             "attempt",
             "reason",
         }
-        assert fallidos[0]["payload"]["errorCode"] == ErrorCode.QUOTA_EXCEEDED.value
+        assert fallidos[0]["payload"]["errorCode"] == ErrorCode.OAUTH_ERROR.value
         assert fallidos[0]["payload"]["attempt"] == 1
     finally:
         set_publisher(None)
@@ -123,6 +128,9 @@ def test_todos_los_eventos_comparten_el_correlation_id(session, events, publishe
         (PublishState.PENDING, PublishState.PUBLISHED, False),
         (PublishState.PUBLISHING, PublishState.PUBLISHED, True),
         (PublishState.PUBLISHING, PublishState.FAILED, True),
+        # US-C5: reintento programado (publicación interrumpida o en espera
+        # de un nuevo intento con backoff).
+        (PublishState.PUBLISHING, PublishState.PENDING, True),
         (PublishState.PUBLISHED, PublishState.PUBLISHING, False),
         (PublishState.FAILED, PublishState.PUBLISHING, True),
         (PublishState.CANCELLED, PublishState.PUBLISHING, False),

@@ -1,7 +1,7 @@
 {
   "modulo": "module-3",
   "equipo": "C",
-  "generado": "2026-09-10T14:00:52+00:00",
+  "generado": "2026-10-07T19:29:55+00:00",
   "envelopeVersion": 1,
   "publicamos": [
     "publish.scheduled",
@@ -17,46 +17,46 @@
   ],
   "ejemplos": {
     "publish.scheduled": {
-      "id": "781258b6-8b24-44af-8861-9afd3f32fde4",
+      "id": "e97ed5d0-e24e-4e0b-8417-409d5f52b73f",
       "type": "publish.scheduled",
       "version": 1,
-      "timestamp": "2026-09-10T14:00:52Z",
+      "timestamp": "2026-10-07T19:29:54Z",
       "correlationId": "corr-evidencia-2026-09-10",
-      "causationId": "781258b6-8b24-44af-8861-9afd3f32fde4",
+      "causationId": "e97ed5d0-e24e-4e0b-8417-409d5f52b73f",
       "source": "module-3",
       "payload": {
         "contentId": "c-demo-ok",
-        "scheduleAt": "2026-09-10T14:05:52Z",
+        "scheduleAt": "2026-10-07T19:34:54Z",
         "timezone": "America/Santiago"
       }
     },
     "publish.completed": {
-      "id": "de05df74-5387-4923-a206-f852380ba7be",
+      "id": "31fe2bc2-503d-41e6-b06b-0f49261c054c",
       "type": "publish.completed",
       "version": 1,
-      "timestamp": "2026-09-10T14:00:52Z",
+      "timestamp": "2026-10-07T19:29:54Z",
       "correlationId": "corr-evidencia-2026-09-10",
-      "causationId": "de05df74-5387-4923-a206-f852380ba7be",
+      "causationId": "31fe2bc2-503d-41e6-b06b-0f49261c054c",
       "source": "module-3",
       "payload": {
         "contentId": "c-demo-ok",
         "youtubeVideoId": "8838c36c39e",
-        "publishedAt": "2026-09-10T14:00:52Z"
+        "publishedAt": "2026-10-07T19:29:54Z"
       }
     },
     "publish.failed": {
-      "id": "8ca04a70-5e43-477f-97fe-87cbdee01e67",
+      "id": "1600fb6a-e894-4b6e-95ca-ca85ffaf542c",
       "type": "publish.failed",
       "version": 1,
-      "timestamp": "2026-09-10T14:00:52Z",
+      "timestamp": "2026-10-07T19:29:55Z",
       "correlationId": "corr-evidencia-2026-09-10-fail",
-      "causationId": "8ca04a70-5e43-477f-97fe-87cbdee01e67",
+      "causationId": "1600fb6a-e894-4b6e-95ca-ca85ffaf542c",
       "source": "module-3",
       "payload": {
         "contentId": "c-demo-error",
-        "errorCode": "QUOTA_EXCEEDED",
+        "errorCode": "OAUTH_ERROR",
         "attempt": 1,
-        "reason": "Cuota de YouTube agotada (simulada por el publicador mock)"
+        "reason": "Fallo simulado por el publicador mock (OAUTH_ERROR)"
       }
     }
   }

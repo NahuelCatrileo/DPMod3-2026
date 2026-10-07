@@ -56,7 +56,11 @@ def test_job_sobrevive_a_la_caida_del_proceso_y_se_dispara(session, events, real
     assert len(events.events_of_type("publish.completed")) == 1
 
 
-def test_caida_a_mitad_de_la_publicacion_termina_en_failed(session, events, real_scheduler):
+def test_caida_a_mitad_de_la_publicacion_se_reencola_para_reintentar(
+    session, events, real_scheduler
+):
+    """US-C5: la interrupción es un fallo transitorio. No se emite
+    publish.failed hasta que se agoten los intentos."""
     publish_id = correr_proceso("colgar", 0.5, MOCK_LATENCY_SECONDS="30")
 
     session.expire_all()
@@ -66,12 +70,11 @@ def test_caida_a_mitad_de_la_publicacion_termina_en_failed(session, events, real
 
     session.expire_all()
     pub = session.get(Publication, publish_id)
-    assert pub.state == PublishState.FAILED.value
+    assert pub.state == PublishState.PENDING.value
+    assert pub.attempts == 1
     assert pub.last_error.startswith(ErrorCode.PUBLISH_FAILED.value)
-    fallidos = events.events_of_type("publish.failed")
-    assert len(fallidos) == 1
-    assert fallidos[0]["payload"]["attempt"] == 1
-    assert fallidos[0]["correlationId"] == pub.correlation_id
+    assert get_scheduler().get_job(job_id_for(publish_id)) is not None
+    assert events.events_of_type("publish.failed") == []
 
 
 # --- Reinicio dentro del mismo proceso ------------------------------------------

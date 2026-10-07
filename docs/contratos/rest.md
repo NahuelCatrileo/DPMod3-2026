@@ -28,6 +28,24 @@ a todos sus eventos. Si no, generamos uno.
 { "status": "error", "code": "SCHEDULE_CONFLICT", "message": "..." }
 ```
 
+## Semántica de `GET /status` con reintentos (US-C5)
+
+El esquema no cambia; sí cambia qué combinación de valores puede aparecer:
+
+| Valor | Significado |
+|---|---|
+| `state: pending` con `attempts: 0` | Esperando su hora de publicación. |
+| `state: pending` con `attempts > 0` | **Esperando un reintento.** El último intento falló; `lastError` trae `CODIGO: motivo`. El próximo intento se calcula como `updated_at` + backoff (el campo `updatedAt` no está en la respuesta, así que el momento exacto solo está en los logs con `correlationId`). |
+| `state: publishing` con `attempts > 0` | Reintento en curso. |
+| `state: failed` | Fallo definitivo o intentos agotados. `lastError` conserva el último error. |
+| `lastError` | Formato `CODIGO: motivo`, con los códigos de la lista registrada. |
+
+Reintentos: máximo `PUBLISH_MAX_ATTEMPTS` (3) intentos por publicación;
+backoff exponencial de `PUBLISH_RETRY_BACKOFF_SECONDS` (60 s, 120 s, 240 s…)
+para errores transitorios y `PUBLISH_QUOTA_RETRY_SECONDS` (3600 s) para
+`QUOTA_EXCEEDED`. Detalle del mapeo en
+`ADR/0006-clasificacion-errores-reintentos.md`.
+
 ## Mapeo de códigos
 
 | Situación | HTTP | `code` |

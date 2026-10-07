@@ -3,7 +3,8 @@
 Backlog US-C6: pending -> publishing -> published | failed
 La usamos ya en el Sprint 1 porque el job handler de US-C2 necesita
 la guarda de transición para ser idempotente (que un disparo doble no
-publique dos veces).
+publique dos veces). US-C5 agrega publishing -> pending para los
+reintentos automáticos (ADR-0006).
 """
 
 from enum import Enum
@@ -26,7 +27,15 @@ VALID_TRANSITIONS: dict[PublishState, set[PublishState]] = {
         PublishState.CANCELLED,
         PublishState.FAILED,
     },
-    PublishState.PUBLISHING: {PublishState.PUBLISHED, PublishState.FAILED},
+    # publishing -> pending: fallo transitorio o de cuota mientras quedan
+    # intentos; la publicación vuelve a la cola con su hora de reintento
+    # (US-C5, ADR-0006). No es un estado nuevo: sigue siendo "pending",
+    # así GET /status no cambia de contrato.
+    PublishState.PUBLISHING: {
+        PublishState.PUBLISHED,
+        PublishState.FAILED,
+        PublishState.PENDING,
+    },
     # US-C7 (Could, Sprint 4): reintento manual failed -> publishing
     PublishState.FAILED: {PublishState.PUBLISHING},
     PublishState.PUBLISHED: set(),
