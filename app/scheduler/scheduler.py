@@ -8,7 +8,9 @@
                                     reconciliación de services/recovery.py
                                     al arrancar y cada SCHEDULER_RECONCILE_SECONDS
   2.5/2.6 pruebas                -> tests/test_scheduler_*.py
-Fuera de alcance: la política de reintentos (US-C5).
+  US-C5 reintentos               -> el handler (services/publishing.py) y la
+                                    reconciliación reprograman jobs con backoff
+                                    (ADR-0006); el scheduler solo los recibe.
 
 Sobre el job store: APScheduler serializa la referencia a la función por su
 ruta de módulo, así que 'app.services.publishing:execute_publication' debe

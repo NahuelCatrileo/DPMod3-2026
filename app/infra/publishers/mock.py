@@ -26,6 +26,13 @@ def _bucket(content_id: str) -> float:
     return int.from_bytes(digest[:4], "big") / 2**32
 
 
+# Motivos por defecto del fallo simulado, por si el código no está en la
+# lista se usa un genérico igual de claro en los logs y en publish.failed.
+_MOTIVOS: dict[ErrorCode, str] = {
+    ErrorCode.QUOTA_EXCEEDED: "Cuota de YouTube agotada (simulada por el publicador mock)",
+}
+
+
 class MockPublisher(Publisher):
     """Simula la publicación en YouTube sin tocar la red ni gastar cuota."""
 
@@ -35,6 +42,7 @@ class MockPublisher(Publisher):
         self,
         latency_seconds: float | None = None,
         failure_rate: float | None = None,
+        error_code: ErrorCode | None = None,
     ) -> None:
         settings = get_settings()
         self.latency_seconds = (
@@ -43,6 +51,10 @@ class MockPublisher(Publisher):
         self.failure_rate = (
             settings.MOCK_FAILURE_RATE if failure_rate is None else failure_rate
         )
+        # US-C5: qué error devuelve el fallo simulado. Con MOCK_FAILURE_CODE
+        # se ensayan los tres caminos en la demo: QUOTA_EXCEEDED (diferible),
+        # PUBLISH_FAILED (transitorio) y OAUTH_ERROR (definitivo).
+        self.error_code = settings.MOCK_FAILURE_CODE if error_code is None else error_code
 
     def publish_video(self, content_id: str) -> PublishResult:
         logger.info("mock_publish_inicio content_id=%s", content_id)
@@ -51,10 +63,17 @@ class MockPublisher(Publisher):
             time.sleep(self.latency_seconds)
 
         if self.failure_rate > 0 and _bucket(content_id) < self.failure_rate:
-            logger.warning("mock_publish_fallo content_id=%s", content_id)
+            logger.warning(
+                "mock_publish_fallo content_id=%s error_code=%s",
+                content_id,
+                self.error_code.value,
+            )
             return PublishResult.failure(
-                ErrorCode.QUOTA_EXCEEDED,
-                "Cuota de YouTube agotada (simulada por el publicador mock)",
+                self.error_code,
+                _MOTIVOS.get(
+                    self.error_code,
+                    f"Fallo simulado por el publicador mock ({self.error_code.value})",
+                ),
             )
 
         video_id = self.fake_video_id(content_id)
