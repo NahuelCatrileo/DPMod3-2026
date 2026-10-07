@@ -36,17 +36,39 @@ Fuente: Doc 1 §6.1 y §6.3 · Doc 3 §3.
 |---|---|---|
 | `publish.scheduled` | Al aceptar `POST /api/publish/schedule` | `contentId`, `scheduleAt`, `timezone` |
 | `publish.completed` | Publicación exitosa | `contentId`, `youtubeVideoId`, `publishedAt` |
-| `publish.failed` | Publicación fallida definitiva | `contentId`, `errorCode`, `attempt`, `reason` |
+| `publish.failed` | Fallo definitivo: error no reintentable o intentos agotados | `contentId`, `errorCode`, `attempt`, `reason` |
 
 Ejemplos:
 
 ```json
 { "contentId": "c-001", "scheduleAt": "2026-09-17T21:30:00Z", "timezone": "America/Santiago" }
 { "contentId": "c-001", "youtubeVideoId": "6226af224c1", "publishedAt": "2026-09-17T21:30:02Z" }
-{ "contentId": "c-001", "errorCode": "QUOTA_EXCEEDED", "attempt": 1, "reason": "..." }
+{ "contentId": "c-001", "errorCode": "OAUTH_ERROR", "attempt": 1, "reason": "..." }
+{ "contentId": "c-002", "errorCode": "QUOTA_EXCEEDED", "attempt": 3, "reason": "..." }
 ```
 
 `errorCode` solo toma valores de la lista registrada (Doc 1 §6.3).
+
+### Reintentos (US-C5)
+
+No publicamos un evento por cada intento fallido:
+
+- Errores **transitorios** (`PUBLISH_FAILED`, `EVENT_VALIDATION_ERROR`) y la
+  cuota agotada (`QUOTA_EXCEEDED`) se **reintentan** hasta
+  `PUBLISH_MAX_ATTEMPTS` (3) veces, con espera creciente. Mientras tanto no
+  se emite nada; el detalle queda en el log con `correlationId` y en
+  `GET /status` (`attempts`, `lastError`).
+- `publish.failed` se emite **una sola vez**, cuando el fallo ya es
+  definitivo: o el código no es reintentable (`OAUTH_ERROR`, `UNAUTHORIZED`,
+  `INVALID_METADATA`, `CONTENT_NOT_FOUND`, `DUPLICATE_CONTENT`,
+  `SCHEDULE_CONFLICT`) o se agotaron los intentos.
+- `attempt` es el número de intentos consumidos en ese punto: `1` para un
+  error definitivo en el primer intento, `PUBLISH_MAX_ATTEMPTS` cuando se
+  agota la política, `0` para una publicación vencida que nunca se intentó
+  (ADR-0004).
+
+El mapeo completo clase ↔ códigos está en `ADR/0006-clasificacion-errores-reintentos.md`.
+**Los esquemas no cambian** (Guía §5.4): mismos eventos, mismos campos.
 
 ## Eventos que consumimos
 

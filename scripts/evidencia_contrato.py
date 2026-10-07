@@ -46,6 +46,7 @@ from app.infra.events.publisher import (  # noqa: E402
     LogEventPublisher,
     set_event_publisher,
 )
+from app.domain.errors import ErrorCode  # noqa: E402
 from app.infra.publishers.factory import set_publisher  # noqa: E402
 from app.infra.publishers.mock import MockPublisher  # noqa: E402
 from app.services.publishing import execute_publication  # noqa: E402
@@ -59,7 +60,16 @@ CORRELATION_ID = "corr-evidencia-2026-09-10"
 
 
 def _flujo(content_id: str, falla: bool) -> None:
-    set_publisher(MockPublisher(latency_seconds=0, failure_rate=1.0 if falla else 0.0))
+    # US-C5: para la evidencia se fuerza un error DEFINITIVO (OAUTH_ERROR),
+    # que emite publish.failed al primer intento. Un QUOTA_EXCEEDED se
+    # reintentaría y el envelope no aparecería hasta agotar los intentos.
+    set_publisher(
+        MockPublisher(
+            latency_seconds=0,
+            failure_rate=1.0 if falla else 0.0,
+            error_code=ErrorCode.OAUTH_ERROR if falla else None,
+        )
+    )
     session = SessionLocal()
     try:
         pub = schedule_publication(
