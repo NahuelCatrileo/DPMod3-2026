@@ -52,10 +52,20 @@ para errores transitorios y `PUBLISH_QUOTA_RETRY_SECONDS` (3600 s) para
 |---|---|---|
 | `scheduleAt` en el pasado | 409 | `SCHEDULE_CONFLICT` |
 | El contenido ya tiene una publicación en `pending`/`publishing` | 409 | `SCHEDULE_CONFLICT` |
+| Transición de estado no permitida por la matriz (US-C6) | 409 | `SCHEDULE_CONFLICT` |
 | Zona horaria inexistente | 422 | `INVALID_METADATA` |
 | Campo faltante o mal formado | 422 | `INVALID_METADATA` |
 | `publishId` inexistente | 404 | `CONTENT_NOT_FOUND` |
 | Falta el JWT, está vencido, mal firmado o sin `sub`/`exp` | 401 | `UNAUTHORIZED` |
+
+> **Transición inválida (US-C6).** `InvalidTransitionError` hereda de
+> `DomainError` y reutiliza `SCHEDULE_CONFLICT` en su sentido de "conflicto de
+> estado"; no se agregó un código a la lista registrada porque eso obliga a los
+> otros tres equipos a actualizar su catálogo por un caso que hoy **no cruza la
+> API**: la matriz protege rutas internas (el job handler y las futuras
+> reconciliación y reintentos), no los endpoints. Si en el Sprint 4 el reintento
+> manual de US-C7 necesita exponer este error al cliente, se propone el código
+> nuevo por §5.4 en ese momento.
 
 > **Decisión que conviene declarar en el Review.** La lista registrada no tiene
 > un código para "dato de entrada inválido" en publicación. Usamos

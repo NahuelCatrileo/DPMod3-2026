@@ -55,9 +55,17 @@ Reglas de la política:
 
 - **Máximo `PUBLISH_MAX_ATTEMPTS` (3) intentos** por publicación, contados en
   la columna `attempts` que ya existía (Doc 3 §6): no hay migración.
-- **Reintento = `publishing → pending`** con `UPDATE` condicional (mismo
-  esquema que `_claim`) y un job nuevo con la hora del próximo intento.
-  Es la única transición nueva de la máquina de estados de US-C6.
+- **Reintento = `publishing → pending`** con `UPDATE` condicional y un job
+  nuevo con la hora del próximo intento. Es una de las tres transiciones que
+  se agregaron en el Sprint 2: US-C5 propuso `publishing → pending` y
+  `pending → failed` (vencida) y `publishing → failed` (fallo definitivo).
+  US-C6 las integró en su punto único de transición
+  (`app.services.transitions.transition_conditionally`, ver
+  `docs/contratos/estados-publicacion.md`), que es el que hoy aplica la guarda
+  de la matriz **y** el `UPDATE` condicional en todas las rutas: handler,
+  reconciliación y reintento. Antes de esa unificación cada servicio repetía su
+  propio `UPDATE` condicional y la matriz no se consultaba en ninguna de esas
+  rutas, así que la guarda de concurrencia existía pero la de dominio no.
 - **`publish.failed` solo en el fallo definitivo o con los intentos
   agotados.** Durante los reintentos no se emite ningún evento: solo un log
   con `correlationId`. Coherente con "fallida definitiva" del catálogo y con
@@ -96,5 +104,7 @@ Reconciliación (cambios sobre ADR-0004):
 - El reintento manual (US-C7) sigue sin existir: la política de este ADR es
   automática. Si US-C7 llega, debe respetar `PUBLISH_MAX_ATTEMPTS` o
   reiniciar el contador, decisión de ese sprint.
-- `publishing → pending` debe aceptarse en la matriz de transiciones de
-  US-C6; si este ADR se rechaza, hay que retirarla de `app/domain/states.py`.
+- `publishing → pending` ya está aceptada en la matriz de transiciones, junto
+  con `pending → failed` y `publishing → failed` (US-C6). Si este ADR se
+  rechaza, hay que retirar `publishing → pending` de `app/domain/states.py`;
+  `pending → failed` seguiría haciendo falta para ADR-0004.

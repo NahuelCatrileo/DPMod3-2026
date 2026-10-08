@@ -11,7 +11,7 @@ from datetime import datetime
 from datetime import timezone as dt_timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.domain.errors import (
@@ -19,10 +19,11 @@ from app.domain.errors import (
     PublicationNotFoundError,
     ScheduleConflictError,
 )
-from app.domain.states import ACTIVE_STATES, PublishState
+from app.domain.states import ACTIVE_STATES, PublishState, supports_transition
 from app.infra.events import build_envelope, payload_publish_scheduled
 from app.infra.events.publisher import get_event_publisher
 from app.infra.models import Publication
+from app.services.transitions import transition_conditionally
 
 logger = logging.getLogger(__name__)
 
@@ -141,9 +142,14 @@ def get_publication(session: Session, publish_id: str) -> Publication | None:
 def cancel_publication(session: Session, publish_id: str) -> Publication:
     """US-C2 · Subtarea 2.2 — Cancela una publicación programada.
 
-    Primero cambia el estado (pending -> cancelled, con UPDATE condicional) y
-    después quita el job. Si el job se disparara entre medio, el handler no
-    podría tomar la publicación porque ya no está en 'pending'.
+    Primero cambia el estado (pending -> cancelled) y después quita el job. Si
+    el job se disparara entre medio, el handler no podría tomar la publicación
+    porque ya no está en 'pending'.
+
+    US-C6: la transición pasa por `transition_conditionally`, así que además
+    del UPDATE condicional se valida el par contra la matriz. Es la tercera
+    ruta productiva que cambia estados (junto con el job handler y la
+    reconciliación) y antes escribía el estado por su cuenta.
 
     Sin endpoint REST ni evento: ninguno de los dos está en el contrato y
     agregarlos requiere el procedimiento de la Guía §5.4.
@@ -152,20 +158,21 @@ def cancel_publication(session: Session, publish_id: str) -> Publication:
     if publication is None:
         raise PublicationNotFoundError(publish_id)
 
-    result = session.execute(
-        update(Publication)
-        .where(
-            Publication.id == publish_id,
-            Publication.state == PublishState.PENDING.value,
+    # Mismo patrón que `recovery._fail_if_state`: primero se comprueba que el
+    # par (estado actual, cancelled) esté en la matriz. Así el error de
+    # conflicto lo sigue viendo quien llama, con el contrato de siempre, en
+    # lugar de un `InvalidTransitionError` que no espera nadie.
+    if not supports_transition(PublishState(publication.state), PublishState.CANCELLED):
+        raise ScheduleConflictError(
+            f"La publicación {publish_id} no se puede cancelar: "
+            f"está en estado '{publication.state}'."
         )
-        .values(
-            state=PublishState.CANCELLED.value,
-            updated_at=datetime.now(dt_timezone.utc),
-        )
-    )
-    session.commit()
-    session.refresh(publication)
-    if result.rowcount != 1:
+
+    # La carrera (otra ejecución movió la fila entre la comprobación y este
+    # UPDATE) la resuelve la condición del UPDATE: `rowcount` 0 y sin escritura.
+    if not transition_conditionally(session, publication, PublishState.CANCELLED):
+        # `transition_conditionally` ya resincronizó el objeto con la base, así
+        # que `publication.state` es el estado real al momento de informar.
         raise ScheduleConflictError(
             f"La publicación {publish_id} no se puede cancelar: "
             f"está en estado '{publication.state}'."

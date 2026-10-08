@@ -14,6 +14,11 @@ error define el camino:
     vuelve a pending con un job nuevo (backoff), SIN emitir publish.failed:
     el catálogo lo reserva para el fallo definitivo.
   - definitivo, o límite de intentos agotado -> failed + publish.failed.
+
+US-C6: todas las transiciones de estado de este módulo pasan por
+`app.services.transitions.transition_conditionally`, que valida el par contra
+la matriz (dominio) y escribe con UPDATE condicional (SQL). No hay ninguna
+asignación directa de `publication.state` en este archivo.
 """
 
 from __future__ import annotations
@@ -22,7 +27,6 @@ import logging
 from datetime import datetime, timedelta
 from datetime import timezone as dt_timezone
 
-from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -38,29 +42,50 @@ from app.infra.events.publisher import get_event_publisher
 from app.infra.models import Publication
 from app.infra.publishers.factory import get_publisher
 from app.services.retry import retry_delay_seconds, should_retry
+from app.services.transitions import transition_conditionally
 
 logger = logging.getLogger(__name__)
 
 
-def _claim(session: Session, publish_id: str) -> bool:
+def _transition_conditionally(
+    session: Session,
+    publication: Publication,
+    new_state: PublishState,
+    **values,
+) -> bool:
+    """Alias local del punto único de transición (US-C6).
+
+    La implementación vive en `app.services.transitions` porque también la usa
+    la reconciliación (`services/recovery.py`). Se mantiene el nombre privado
+    para no cambiar la API interna que ya conocen los tests del módulo.
+    """
+    return transition_conditionally(session, publication, new_state, **values)
+
+
+
+def _claim(session: Session, publication: Publication) -> bool:
     """Intenta tomar la publicación: pending -> publishing.
 
-    Devuelve True solo si esta ejecución ganó la carrera.
+    Devuelve True solo si esta ejecución ganó la carrera. Pasa por
+    `_transition_conditionally`, así que la guarda de la matriz (US-C6) y el
+    UPDATE condicional (Sprint 1) se aplican en el mismo punto.
+
+    Si la publicación ya no está en `pending`, no se intenta la transición:
+    un redisparo del mismo job (reinicio, doble registro) es un caso normal,
+    no un error de dominio, y debe retirarse en silencio. Dejarlo llegar a
+    `assert_transition()` haría que el job reventara con
+    `InvalidTransitionError` sobre una publicación ya publicada, que es justo
+    el caso que la idempotencia de US-C2 tiene que tolerar.
     """
-    result = session.execute(
-        update(Publication)
-        .where(
-            Publication.id == publish_id,
-            Publication.state == PublishState.PENDING.value,
-        )
-        .values(
-            state=PublishState.PUBLISHING.value,
-            attempts=Publication.attempts + 1,
-            updated_at=datetime.now(dt_timezone.utc),
-        )
+    if publication.state != PublishState.PENDING.value:
+        return False
+
+    return _transition_conditionally(
+        session,
+        publication,
+        PublishState.PUBLISHING,
+        attempts=Publication.attempts + 1,
     )
-    session.commit()
-    return result.rowcount == 1
 
 
 def execute_publication(publish_id: str) -> None:
@@ -73,7 +98,8 @@ def execute_publication(publish_id: str) -> None:
             logger.error("job_publicacion_inexistente publish_id=%s", publish_id)
             return
 
-        if not _claim(session, publish_id):
+        if not _claim(session, publication):
+            session.refresh(publication)
             logger.warning(
                 "job_ignorado publish_id=%s estado_actual=%s "
                 "(ya fue tomado por otra ejecución)",
@@ -82,7 +108,6 @@ def execute_publication(publish_id: str) -> None:
             )
             return
 
-        session.refresh(publication)
         correlation_id = publication.correlation_id
         content_id = publication.content_id
         attempt = publication.attempts
@@ -185,20 +210,17 @@ def _schedule_retry(
     """
     delay = retry_delay_seconds(error_class, attempt)
     run_at = datetime.now(dt_timezone.utc) + timedelta(seconds=delay)
-    result = session.execute(
-        update(Publication)
-        .where(
-            Publication.id == publication.id,
-            Publication.state == PublishState.PUBLISHING.value,
-        )
-        .values(
-            state=PublishState.PENDING.value,
-            last_error=f"{error_code.value}: {reason}",
-            updated_at=datetime.now(dt_timezone.utc),
-        )
-    )
-    session.commit()
-    if result.rowcount != 1:
+    last_error = f"{error_code.value}: {reason}"
+
+    # US-C6: el cambio publishing -> pending también pasa por el punto único
+    # (matriz + UPDATE condicional sobre 'publishing'). Si otra ejecución ya
+    # movió la fila, no se programa un reintento duplicado.
+    if not _transition_conditionally(
+        session,
+        publication,
+        PublishState.PENDING,
+        last_error=last_error,
+    ):
         logger.warning(
             "reintento_omitido publish_id=%s (la fila ya no está en publishing)",
             publication.id,
@@ -233,12 +255,25 @@ def _mark_published(
     youtube_video_id: str,
     correlation_id: str,
 ) -> None:
-    published_at = datetime.now(dt_timezone.utc)
-    publication.state = PublishState.PUBLISHED.value
-    publication.youtube_video_id = youtube_video_id
-    publication.last_error = None
-    publication.updated_at = published_at
-    session.commit()
+    # Pasamos por `_transition_conditionally`: si la matriz no permite
+    # publishing -> published, se lanza el error de dominio y no hay UPDATE.
+    if not _transition_conditionally(
+        session,
+        publication,
+        PublishState.PUBLISHED,
+        youtube_video_id=youtube_video_id,
+        last_error=None,
+    ):
+        logger.warning(
+            "publicacion_no_marcada_completada publish_id=%s estado=%s",
+            publication.id,
+            publication.state,
+        )
+        return
+
+    # El instante que va en el evento es el de la escritura efectiva, no el de
+    # antes de validar y persistir.
+    published_at = publication.updated_at
 
     logger.info(
         "publicacion_completada publish_id=%s youtube_video_id=%s correlationId=%s",
@@ -274,11 +309,24 @@ def _mark_failed(
     """Fallo final: error definitivo o límite de reintentos agotado (US-C5).
 
     Es el ÚNICO punto donde se emite publish.failed desde el handler.
+
+    US-C6: el cambio a `failed` pasa por el punto único (matriz + UPDATE
+    condicional sobre el estado de origen), así que un error DEFINITIVO nunca
+    puede pisar una fila que otra ejecución ya publicó.
     """
-    publication.state = PublishState.FAILED.value
-    publication.last_error = f"{error_code.value}: {reason}"
-    publication.updated_at = datetime.now(dt_timezone.utc)
-    session.commit()
+    last_error = f"{error_code.value}: {reason}"
+    if not _transition_conditionally(
+        session,
+        publication,
+        PublishState.FAILED,
+        last_error=last_error,
+    ):
+        logger.warning(
+            "publicacion_no_marcada_fallida publish_id=%s estado=%s",
+            publication.id,
+            publication.state,
+        )
+        return
 
     logger.warning(
         "publicacion_fallida publish_id=%s error_code=%s correlationId=%s",
