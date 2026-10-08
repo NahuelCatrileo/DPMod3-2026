@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from datetime import timezone as dt_timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -45,6 +45,7 @@ from app.infra.events import build_envelope, payload_publish_failed
 from app.infra.events.publisher import get_event_publisher
 from app.infra.models import Publication
 from app.services.retry import retry_delay_seconds, should_retry
+from app.services.transitions import transition_conditionally
 
 logger = logging.getLogger(__name__)
 
@@ -179,8 +180,10 @@ def _requeue_if_state(
 ) -> bool:
     """US-C5 · publishing -> pending con UPDATE condicional + job de reintento.
 
-    Mismo esquema que _fail_if_state: solo pasa si la fila seguía en
-    'publishing', así una carrera con el job handler no duplica jobs.
+    US-C6: la transición pasa por `transition_conditionally`, así que además
+    del UPDATE condicional se valida el par contra la matriz. El UPDATE
+    condicional sigue siendo lo que evita duplicar jobs en una carrera con el
+    job handler.
     """
     # Import local para evitar un ciclo entre services y scheduler.
     from app.scheduler.scheduler import schedule_job
@@ -188,17 +191,13 @@ def _requeue_if_state(
     error_code = ErrorCode.PUBLISH_FAILED
     delay = retry_delay_seconds(ErrorClass.TRANSITORIO, pub.attempts)
     run_at = now + timedelta(seconds=delay)
-    result = session.execute(
-        update(Publication)
-        .where(Publication.id == pub.id, Publication.state == PublishState.PUBLISHING.value)
-        .values(
-            state=PublishState.PENDING.value,
-            last_error=f"{error_code.value}: {reason}",
-            updated_at=now,
-        )
-    )
-    session.commit()
-    if result.rowcount != 1:
+
+    if not transition_conditionally(
+        session,
+        pub,
+        PublishState.PENDING,
+        last_error=f"{error_code.value}: {reason}",
+    ):
         return False
 
     schedule_job(pub.id, run_at)
@@ -214,20 +213,26 @@ def _requeue_if_state(
     return True
 
 
-def _fail_if_state(session, pub: Publication, expected: PublishState, reason: str) -> bool:
-    """origin -> failed con UPDATE condicional. Emite publish.failed solo si ganó."""
+def _fail_if_state(
+    session: Session, pub: Publication, expected: PublishState, reason: str
+) -> bool:
+    """origin -> failed con UPDATE condicional. Emite publish.failed solo si ganó.
+
+    US-C6: `expected` es el estado de origen que se valida contra la matriz
+    dentro de `transition_conditionally`. El helper toma el origen del propio
+    objeto, así que aquí se comprueba antes que la fila siga en el estado que
+    la reconciliación observó; si no, no hay transición que intentar.
+    """
+    if pub.state != expected.value:
+        return False
+
     error_code = ErrorCode.PUBLISH_FAILED
-    result = session.execute(
-        update(Publication)
-        .where(Publication.id == pub.id, Publication.state == expected.value)
-        .values(
-            state=PublishState.FAILED.value,
-            last_error=f"{error_code.value}: {reason}",
-            updated_at=datetime.now(dt_timezone.utc),
-        )
-    )
-    session.commit()
-    if result.rowcount != 1:
+    if not transition_conditionally(
+        session,
+        pub,
+        PublishState.FAILED,
+        last_error=f"{error_code.value}: {reason}",
+    ):
         return False
 
     logger.warning(

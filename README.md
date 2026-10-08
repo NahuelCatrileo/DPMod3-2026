@@ -48,7 +48,7 @@ pytest --cov=app --cov-report=term-missing
 ruff check app tests
 ```
 
-Estado actual: **107 tests, 95 % de cobertura**. El umbral de la DoD es 70 %.
+Estado actual: **183 tests, 94 % de cobertura**. El umbral de la DoD es 70 %.
 
 ---
 
@@ -77,9 +77,18 @@ Estado actual: **107 tests, 95 % de cobertura**. El umbral de la DoD es 70 %.
 | US-C1 · Programar publicación | 5 | **Completa** | — |
 | US-C2 · Scheduler de publicaciones | 8 | **Esqueleto — no comprometida** | Cancelación de jobs, pruebas de integración con reinicio real de contenedor |
 | US-C5 · Manejo de cuotas y errores | 5 | **Completa (adelantada)** | — |
-| US-C6 · Máquina de estados | 3 | Parcial (adelantada) | Formalizar en Sprint 2 |
+| US-C6 · Máquina de estados | 3 | **Completa** | — |
 | US-C3 · YouTube real | 8 | Esqueleto | Sprint 3 |
 | US-C7 · Reintento manual | 3 | No iniciada | Sprint 4 |
+
+**`failed` es terminal, `pending` no.** El reintento manual de una publicación
+fallida (US-C7) queda para el Sprint 4: `failed → pending` **no** está permitido
+en la matriz. No confundir con el reintento automático de US-C5, que sí vuelve a
+`pending` pero **sin pasar por `failed`**: ante un error transitorio o de cuota
+con intentos disponibles, el handler hace `publishing → pending` y reprograma el
+job con backoff. Una publicación solo llega a `failed` cuando el error es
+definitivo o se agotaron los intentos, y desde ahí ya no sale.
+Ver [`docs/contratos/estados-publicacion.md`](docs/contratos/estados-publicacion.md).
 
 **Comprometido en el Sprint 1: 8 SP** (US-C4 + US-C1), igual que el Plan de
 Release del Doc 2 §7. El esqueleto del scheduler es tarea técnica, no historia.
@@ -172,6 +181,9 @@ app/
 
 - `docs/contratos/eventos.md` — envelope, eventos publicados y consumidos
 - `docs/contratos/rest.md` — endpoints y mapeo de códigos de error
+- `docs/contratos/estados-publicacion.md` — matriz de estados, decisión sobre
+  `failed` y verificación contra el publicador mock (US-C6)
+- `scrum/actas/` — actas de sprint, con las decisiones registradas
 - `ADR/` — decisiones con alternativas evaluadas
 - `USO-IA.md` — declaración de uso de IA generativa (Anexo D)
 

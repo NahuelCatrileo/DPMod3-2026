@@ -118,28 +118,17 @@ def test_todos_los_eventos_comparten_el_correlation_id(session, events, publishe
 
 
 # --- Máquina de estados (US-C6) -------------------------------------------
+# La cobertura exhaustiva de la matriz (todos los pares estado-origen ×
+# estado-destino, válidos e inválidos, con verificación de persistencia) vive
+# en tests/test_state_machine.py. No se duplica aquí para que no existan dos
+# listas de transiciones que puedan desincronizarse con la matriz.
 
 
-@pytest.mark.parametrize(
-    "origen,destino,esperado",
-    [
-        (PublishState.PENDING, PublishState.PUBLISHING, True),
-        (PublishState.PENDING, PublishState.CANCELLED, True),
-        (PublishState.PENDING, PublishState.PUBLISHED, False),
-        (PublishState.PUBLISHING, PublishState.PUBLISHED, True),
-        (PublishState.PUBLISHING, PublishState.FAILED, True),
-        # US-C5: reintento programado (publicación interrumpida o en espera
-        # de un nuevo intento con backoff).
-        (PublishState.PUBLISHING, PublishState.PENDING, True),
-        (PublishState.PUBLISHED, PublishState.PUBLISHING, False),
-        (PublishState.FAILED, PublishState.PUBLISHING, True),
-        (PublishState.CANCELLED, PublishState.PUBLISHING, False),
-    ],
-)
-def test_matriz_de_transiciones(origen, destino, esperado):
-    assert can_transition(origen, destino) is esperado
-
-
-def test_transicion_invalida_lanza_error():
+def test_transicion_invalida_lanza_error_de_dominio():
     with pytest.raises(InvalidTransitionError):
         assert_transition(PublishState.PUBLISHED, PublishState.PENDING)
+
+
+def test_la_matriz_sigue_rechazando_el_reintento_de_failed():
+    """US-C6 mantiene `failed` como terminal en esta versión."""
+    assert can_transition(PublishState.FAILED, PublishState.PENDING) is False
