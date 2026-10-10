@@ -4,13 +4,24 @@ Nada de valores reales aquí: los defaults son de desarrollo local y
 deben poder sobrescribirse desde .env / docker-compose.
 """
 
+import json
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import BaseModel, Field, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from app.domain.errors import ErrorCode
+
+
+class AuthClient(BaseModel):
+    """Cliente de servicio autorizado a pedir tokens (ADR-0007)."""
+
+    # Hash del client_secret, generado con scripts/generar_cliente.py.
+    # El secreto en claro nunca se guarda.
+    secret_hash: str
+    # Va en el claim `role` del token.
+    role: str = "service"
 
 
 class Settings(BaseSettings):
@@ -88,6 +99,22 @@ class Settings(BaseSettings):
     JWT_AUDIENCE: str | None = None
     # Tolerancia de reloj entre el gateway y este módulo, en segundos.
     JWT_LEEWAY_SECONDS: int = 30
+
+    # --- Emisión de tokens a clientes de servicio (ADR-0007) ---------------
+    # JSON {client_id: {"secret_hash": "...", "role": "..."}}. Vacío = nadie
+    # puede pedir tokens y POST /api/auth/token siempre responde 401.
+    AUTH_CLIENTS: Annotated[dict[str, AuthClient], NoDecode] = Field(default_factory=dict)
+    # Vigencia del token emitido, en minutos.
+    JWT_ACCESS_TOKEN_MINUTES: int = Field(default=30, ge=1, le=1440)
+
+    @field_validator("AUTH_CLIENTS", mode="before")
+    @classmethod
+    def _auth_clients_desde_json(cls, value):
+        # Se decodifica aquí y no en pydantic-settings para que una variable
+        # vacía (AUTH_CLIENTS=) signifique "sin clientes" y no un error.
+        if isinstance(value, str):
+            return json.loads(value) if value.strip() else {}
+        return value
 
 
 @lru_cache

@@ -13,11 +13,18 @@ cada PR que toque una firma.
 | `POST /api/publish/schedule` | `{ contentId, scheduleAt, timezone }` | `202 { publishId, state, scheduleAt, timezone, correlationId }` | US-C1 |
 | `GET /api/publish/{id}/status` | — | `200 { publishId, state, scheduleAt, timezone, attempts, youtubeVideoId?, lastError?, correlationId }` | US-C6 |
 | `GET /api/health` | — | `200 { status, data }` | — |
+| `POST /api/auth/token` | formulario `grant_type=client_credentials`, `client_id`, `client_secret` (o HTTP Basic) | `200 { access_token, token_type, expires_in }` | ADR-0007 |
 | `POST /api/publish/{id}/now` | — | **No implementado** (US-C7, Could, Sprint 4) | US-C7 |
 
 Todas las rutas `/api/publish/*` exigen la cabecera
 `Authorization: Bearer <jwt>` (ADR-0005). El token lo emite el API Gateway
 (Equipo D) y este módulo solo lo verifica. `GET /api/health` queda público.
+
+Si el token no lo emite otro sistema, `POST /api/auth/token` lo entrega a
+clientes de servicio registrados en `AUTH_CLIENTS` (ADR-0007). Sigue el flujo
+*client credentials* de OAuth 2.0 (RFC 6749 §4.4), por eso el pedido va como
+formulario y la respuesta usa `access_token` / `expires_in` en vez del sobre
+`{ status, data }`. Los errores sí usan el sobre acordado.
 
 Cabecera opcional `X-Correlation-Id`: si viene, se propaga a la publicación y
 a todos sus eventos. Si no, generamos uno.
@@ -57,6 +64,8 @@ para errores transitorios y `PUBLISH_QUOTA_RETRY_SECONDS` (3600 s) para
 | Campo faltante o mal formado | 422 | `INVALID_METADATA` |
 | `publishId` inexistente | 404 | `CONTENT_NOT_FOUND` |
 | Falta el JWT, está vencido, mal firmado o sin `sub`/`exp` | 401 | `UNAUTHORIZED` |
+| `POST /api/auth/token`: cliente inexistente, secreto incorrecto o sin credenciales | 401 | `UNAUTHORIZED` |
+| `POST /api/auth/token`: `grant_type` distinto de `client_credentials` o faltante | 422 | `INVALID_METADATA` |
 
 > **Transición inválida (US-C6).** `InvalidTransitionError` hereda de
 > `DomainError` y reutiliza `SCHEDULE_CONFLICT` en su sentido de "conflicto de

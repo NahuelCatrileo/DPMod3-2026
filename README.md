@@ -34,6 +34,16 @@ Las rutas `/api/publish/*` exigen `Authorization: Bearer <jwt>` (ADR-0005).
 Para probar en local, genere un token con
 `python scripts/generar_jwt.py` y péguelo en Authorize, en `/docs`.
 
+Si el token lo tiene que emitir este módulo (ADR-0007), registre cada
+cliente de servicio con `python scripts/generar_cliente.py --client-id gateway`,
+copie la línea `AUTH_CLIENTS=...` a su `.env` y entregue el `client_secret`
+al otro equipo por un canal privado. El cliente pide su token así:
+
+```bash
+curl -X POST http://localhost:8000/api/auth/token \
+  -d grant_type=client_credentials -d client_id=gateway -d client_secret=<secreto>
+```
+
 ## Correr los tests
 
 ```bash
