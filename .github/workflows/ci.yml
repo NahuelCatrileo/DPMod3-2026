@@ -65,10 +65,21 @@ jobs:
         run: |
           docker network create it-net
 
+          # ADR-0007: el módulo emite los tokens y el gateway los valida con la
+          # misma clave. Se registra un cliente solo para este run.
+          cred="$(docker run --rm pubtube-module-under-test:ci \
+            python scripts/generar_cliente.py --client-id module-ci)"
+          client_secret="$(echo "$cred" | awk '/^client_secret:/ {print $2}')"
+          echo "::add-mask::$client_secret"
+          echo "CLIENT_SECRET=$client_secret" >> "$GITHUB_ENV"
+          auth_clients="$(echo "$cred" | sed -n "s/^AUTH_CLIENTS='\(.*\)'$/\1/p")"
+
           docker run -d --name module-under-test --network it-net \
+            -p "$MODULE_PORT:$MODULE_PORT" \
             -e PORT="$MODULE_PORT" -e APP_ENV -e DATABASE_URL \
             -e PUBLISHER_MODE -e EVENT_TRANSPORT -e MOCK_LATENCY_SECONDS \
             -e SCHEDULER_ENABLED -e SESSION_SECRET_KEY \
+            -e JWT_SECRET_KEY="$JWT_SECRET" -e AUTH_CLIENTS="$auth_clients" \
             pubtube-module-under-test:ci
 
           docker run -d --name gateway-under-test --network it-net \
@@ -91,6 +102,22 @@ jobs:
             -H "Authorization: Bearer $token" \
             -H "X-Correlation-Id: module-ci-${GITHUB_RUN_ID}" \
             "http://127.0.0.1:8000$GATEWAY_SMOKE_PATH"
+
+          # ADR-0007: token emitido por M3, validado por el gateway y por M3.
+          set -o pipefail
+          curl "${retry[@]}" "http://127.0.0.1:$MODULE_PORT/health"
+          m3_token="$(curl --fail --silent --show-error \
+            -d grant_type=client_credentials -d client_id=module-ci \
+            --data-urlencode "client_secret=$CLIENT_SECRET" \
+            "http://127.0.0.1:$MODULE_PORT/api/auth/token" | jq -r .access_token)"
+          schedule_at="$(date -u -d '+1 hour' +%Y-%m-%dT%H:%M:%SZ)"
+          publish_id="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer $m3_token" -H "Content-Type: application/json" \
+            -d "{\"contentId\":\"module-ci-${GITHUB_RUN_ID}\",\"scheduleAt\":\"$schedule_at\",\"timezone\":\"UTC\"}" \
+            http://127.0.0.1:8000/api/publish/schedule | jq -r .publishId)"
+          curl --fail --silent --show-error --output /dev/null \
+            -H "Authorization: Bearer $m3_token" \
+            "http://127.0.0.1:8000/api/publish/$publish_id/status"
 
       - name: Show logs on failure
         if: failure()
