@@ -151,14 +151,32 @@ def test_vigencia_configurable(anon_client, clientes, monkeypatch):
     assert r.json()["expires_in"] == 300
 
 
-def test_en_produccion_no_firma_con_la_clave_por_defecto(clientes, monkeypatch):
+@pytest.mark.parametrize(
+    "clave",
+    [
+        "cambiame-en-.env",  # default de config.py
+        "genere-uno-con-openssl-rand-hex-32",  # el de .env.example, tal cual
+        "corta",  # menos de 256 bits
+    ],
+)
+def test_en_produccion_no_firma_con_una_clave_insegura(clientes, monkeypatch, clave):
     from app.services.client_credentials import issue_access_token
 
     settings = get_settings()
     monkeypatch.setattr(settings, "APP_ENV", "prod")
-    monkeypatch.setattr(settings, "JWT_SECRET_KEY", "cambiame-en-.env")
+    monkeypatch.setattr(settings, "JWT_SECRET_KEY", clave)
     with pytest.raises(RuntimeError):
         issue_access_token("gateway", settings.AUTH_CLIENTS["gateway"])
+
+
+def test_en_produccion_firma_con_una_clave_generada(clientes, monkeypatch):
+    from app.services.client_credentials import issue_access_token
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "APP_ENV", "prod")
+    monkeypatch.setattr(settings, "JWT_SECRET_KEY", "a" * 64)  # largo de openssl rand -hex 32
+    token, _ = issue_access_token("gateway", settings.AUTH_CLIENTS["gateway"])
+    assert jwt.decode(token, "a" * 64, algorithms=[settings.JWT_ALGORITHM])["sub"] == "gateway"
 
 
 def test_auth_clients_se_lee_como_json_desde_el_entorno(monkeypatch):

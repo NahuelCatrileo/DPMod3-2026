@@ -1,9 +1,10 @@
 """Emisión de JWT a clientes de servicio (ADR-0007).
 
-Flujo *client credentials* de OAuth 2.0 (RFC 6749 §4.4): un sistema (el API
-Gateway u otro módulo) se identifica con `client_id` y `client_secret` y
-recibe un JWT de vida corta. Ese JWT es el mismo que verifica
-`app/api/auth.py`, así que sirve para llamar a `/api/publish/*`.
+Flujo *client credentials* de OAuth 2.0 (RFC 6749 §4.4): un sistema que
+llama a la API se identifica con `client_id` y `client_secret` y recibe un
+JWT de vida corta. Ese JWT lo validan el API Gateway (Equipo D, con la misma
+clave en `JWT_SECRET`) y `app/api/auth.py`, así que sirve para llamar a
+`/api/publish/*` a través del gateway o directo al módulo.
 
 Los secretos se guardan como hash PBKDF2-SHA256 con sal (solo librería
 estándar). Formato: `pbkdf2_sha256$<iteraciones>$<sal b64>$<hash b64>`.
@@ -28,7 +29,11 @@ logger = logging.getLogger(__name__)
 _ALGORITMO_HASH = "pbkdf2_sha256"
 # Recomendación OWASP (2023) para PBKDF2-HMAC-SHA256.
 ITERACIONES_POR_DEFECTO = 600_000
-_SECRETO_DEFAULT = "cambiame-en-.env"
+# Valores de ejemplo de config.py y .env.example: son públicos, así que
+# firmar con ellos equivale a publicar la clave.
+_CLAVES_DE_EJEMPLO = frozenset({"cambiame-en-.env", "genere-uno-con-openssl-rand-hex-32"})
+# RFC 7518 §3.2: la clave de HS256 debe tener al menos 256 bits.
+_LARGO_MINIMO_CLAVE = 32
 
 
 def hash_secret(secret: str, iterations: int = ITERACIONES_POR_DEFECTO) -> str:
@@ -77,9 +82,13 @@ def authenticate_client(client_id: str, client_secret: str) -> AuthClient | None
 def issue_access_token(client_id: str, cliente: AuthClient) -> tuple[str, int]:
     """Devuelve (token, segundos de vigencia)."""
     settings = get_settings()
-    if settings.APP_ENV == "prod" and settings.JWT_SECRET_KEY == _SECRETO_DEFAULT:
-        # Firmar con la clave por defecto equivale a publicar la clave.
-        raise RuntimeError("JWT_SECRET_KEY no está configurada en producción")
+    clave = settings.JWT_SECRET_KEY
+    if settings.APP_ENV == "prod" and (
+        clave in _CLAVES_DE_EJEMPLO or len(clave.encode()) < _LARGO_MINIMO_CLAVE
+    ):
+        raise RuntimeError(
+            "JWT_SECRET_KEY no sirve para producción: genere una con openssl rand -hex 32"
+        )
 
     vigencia = settings.JWT_ACCESS_TOKEN_MINUTES * 60
     ahora = datetime.now(timezone.utc)
