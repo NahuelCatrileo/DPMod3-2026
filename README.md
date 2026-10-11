@@ -30,19 +30,23 @@ Documentación interactiva: <http://localhost:8000/docs>
 > `openssl rand -hex 32` y cambie `POSTGRES_PASSWORD`.
 
 Las rutas `/api/publish/*` exigen `Authorization: Bearer <jwt>` (ADR-0005).
-`JWT_SECRET_KEY` debe ser la misma clave con la que firma el API Gateway.
-Para probar en local, genere un token con
-`python scripts/generar_jwt.py` y péguelo en Authorize, en `/docs`.
+Los tokens los emite este módulo (ADR-0007) y el API Gateway los valida, así
+que `JWT_SECRET_KEY` debe tener el mismo valor que `JWT_SECRET` del gateway.
 
-Si el token lo tiene que emitir este módulo (ADR-0007), registre cada
-cliente de servicio con `python scripts/generar_cliente.py --client-id gateway`,
-copie la línea `AUTH_CLIENTS=...` a su `.env` y entregue el `client_secret`
-al otro equipo por un canal privado. El cliente pide su token así:
+Registre un cliente por cada sistema que llame a la API con
+`python scripts/generar_cliente.py --client-id <sistema>`, copie la línea
+`AUTH_CLIENTS=...` a su `.env` y entregue el `client_secret` a ese equipo por
+un canal privado. El gateway no necesita un cliente propio: reenvía el token
+de quien llama. El token se pide directo al módulo, porque el gateway todavía
+no expone esta ruta (ver *Puntos abiertos de contrato*):
 
 ```bash
 curl -X POST http://localhost:8000/api/auth/token \
-  -d grant_type=client_credentials -d client_id=gateway -d client_secret=<secreto>
+  -d grant_type=client_credentials -d client_id=<sistema> -d client_secret=<secreto>
 ```
+
+Para probar en local sin registrar un cliente, genere un token con
+`python scripts/generar_jwt.py` y péguelo en Authorize, en `/docs`.
 
 ## Correr los tests
 
@@ -58,7 +62,7 @@ pytest --cov=app --cov-report=term-missing
 ruff check app tests
 ```
 
-Estado actual: **183 tests, 94 % de cobertura**. El umbral de la DoD es 70 %.
+Estado actual: **215 tests, 96 % de cobertura**. El umbral de la DoD es 70 %.
 
 ---
 
@@ -76,6 +80,10 @@ Estado actual: **183 tests, 94 % de cobertura**. El umbral de la DoD es 70 %.
 | `EVENT_TRANSPORT` | `log` \| `amqp` | `log` es el doble de prueba. `amqp` publica a RabbitMQ. |
 | `SCHEDULER_ENABLED` | bool | Apagar en tests. |
 | `SCHEDULER_MISFIRE_GRACE_SECONDS` | int | Margen para ejecutar jobs atrasados tras un reinicio. |
+| `JWT_SECRET_KEY` | `openssl rand -hex 32` | ADR-0005 y ADR-0007. Firma y verifica los JWT. Mismo valor que `JWT_SECRET` del gateway. Con `APP_ENV=prod` el módulo no firma con el valor de ejemplo ni con una clave de menos de 32 bytes. |
+| `AUTH_CLIENTS` | JSON | ADR-0007. Clientes que pueden pedir tokens, con el hash de su secreto. Cada entrada sale de `scripts/generar_cliente.py`. |
+| `JWT_ACCESS_TOKEN_MINUTES` | 1–1440 | ADR-0007. Vigencia del token emitido. 30 por defecto. |
+| `JWT_ISSUER` / `JWT_AUDIENCE` | texto | Opcionales. `JWT_AUDIENCE` va vacío: el gateway rechaza los tokens que traen `aud`. |
 
 ---
 
@@ -167,6 +175,17 @@ acta (Guía §5.4). No se resuelven por decisión unilateral.
    config por defecto el evento llega varios minutos después del primer
    error. **No cambia ningún esquema** (mismos campos y códigos), pero sí el
    momento: declararlo en la reunión por si Equipo D asume fallo inmediato.
+
+4. **Emisión de tokens (ADR-0007).** Confirmado que los emite este módulo.
+   Probado contra la imagen del gateway `pubtube-mod4:develop`: acepta
+   nuestros tokens sin `user_id` (usa `sub`). Falta acordar con Equipo D:
+   - **Exponer `POST /api/auth/token` en el gateway.** Hoy no tiene esa ruta
+     y además exige JWT para llegar a ella, así que los clientes piden el
+     token directo al módulo, sin el rate limiting del gateway.
+   - **`aud`.** El gateway no la valida y rechaza los tokens que la traen; por
+     eso `JWT_AUDIENCE` queda vacío.
+   - **Reloj.** El gateway valida `iat` sin margen: si su reloj va atrasado
+     respecto del nuestro, un token recién emitido responde 401.
 
 ---
 

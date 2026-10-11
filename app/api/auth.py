@@ -1,7 +1,8 @@
 """Verificación de JWT en la API del módulo (ADR-0005).
 
-El token lo emite el API Gateway (Equipo D, US-D1); aquí solo se verifica.
-Llega en la cabecera `Authorization: Bearer <token>`.
+El token lo emite este módulo en POST /api/auth/token (ADR-0007). El API
+Gateway (Equipo D, US-D1) lo valida y lo reenvía, y aquí se verifica de
+nuevo. Llega en la cabecera `Authorization: Bearer <token>`.
 
 Qué se exige:
 - Firma válida con JWT_SECRET_KEY y el algoritmo configurado. Se pasa una
@@ -31,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 # auto_error=False: si falta la cabecera respondemos con el sobre de error
 # acordado (UNAUTHORIZED) en vez del {"detail": ...} de FastAPI.
-_bearer = HTTPBearer(auto_error=False, description="JWT emitido por el API Gateway")
+_bearer = HTTPBearer(auto_error=False, description="JWT emitido por POST /api/auth/token")
 
 
 def decode_token(token: str) -> dict[str, Any]:

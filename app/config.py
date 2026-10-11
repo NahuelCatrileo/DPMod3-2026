@@ -89,12 +89,15 @@ class Settings(BaseSettings):
     SESSION_SECRET_KEY: str = "cambiame-en-.env"
 
     # --- Autenticación de la API con JWT (ADR-0005) ------------------------
-    # Los tokens los emite el API Gateway (Equipo D, US-D1). Este módulo solo
-    # los verifica, con la misma clave compartida. El default no sirve fuera
-    # de desarrollo: en .env va uno generado con `openssl rand -hex 32`.
+    # Los tokens los emite este módulo (ADR-0007) y los verifican el API
+    # Gateway (Equipo D, US-D1) y este módulo, con la misma clave compartida
+    # (en el gateway se llama JWT_SECRET). El default no sirve fuera de
+    # desarrollo: en .env va uno generado con `openssl rand -hex 32`.
     JWT_SECRET_KEY: str = "cambiame-en-.env"
     JWT_ALGORITHM: str = "HS256"
     # Si se completan, el token debe traer exactamente estos `iss` / `aud`.
+    # JWT_AUDIENCE va vacío mientras el gateway no valide `aud`: PyJWT
+    # rechaza un token con `aud` si quien lo verifica no espera ninguna.
     JWT_ISSUER: str | None = None
     JWT_AUDIENCE: str | None = None
     # Tolerancia de reloj entre el gateway y este módulo, en segundos.

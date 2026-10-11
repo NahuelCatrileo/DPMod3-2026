@@ -1,6 +1,6 @@
 # Contrato REST — Módulo 3 (Equipo C)
 
-Versión 1 · Sprint 1 · Última actualización: 2026-09-10
+Versión 1 · Sprint 1 · Última actualización: 2026-10-10
 
 El OpenAPI generado está en `http://localhost:8000/openapi.json` y la UI en
 `http://localhost:8000/docs`. Exportarlo a `docs/contratos/openapi.json` en
@@ -17,14 +17,22 @@ cada PR que toque una firma.
 | `POST /api/publish/{id}/now` | — | **No implementado** (US-C7, Could, Sprint 4) | US-C7 |
 
 Todas las rutas `/api/publish/*` exigen la cabecera
-`Authorization: Bearer <jwt>` (ADR-0005). El token lo emite el API Gateway
-(Equipo D) y este módulo solo lo verifica. `GET /api/health` queda público.
+`Authorization: Bearer <jwt>` (ADR-0005). `GET /api/health` y
+`POST /api/auth/token` quedan públicos.
 
-Si el token no lo emite otro sistema, `POST /api/auth/token` lo entrega a
-clientes de servicio registrados en `AUTH_CLIENTS` (ADR-0007). Sigue el flujo
-*client credentials* de OAuth 2.0 (RFC 6749 §4.4), por eso el pedido va como
-formulario y la respuesta usa `access_token` / `expires_in` en vez del sobre
+El token lo emite este módulo: `POST /api/auth/token` lo entrega a los
+clientes de servicio registrados en `AUTH_CLIENTS` (ADR-0007). El API Gateway
+(Equipo D) lo valida con la misma clave (`JWT_SECRET` allá, `JWT_SECRET_KEY`
+aquí) y este módulo lo verifica de nuevo. Sigue el flujo *client credentials*
+de OAuth 2.0 (RFC 6749 §4.4), por eso el pedido va como formulario y la
+respuesta usa `access_token` / `expires_in` en vez del sobre
 `{ status, data }`. Los errores sí usan el sobre acordado.
+
+Claims del token: `sub` (el `client_id`), `role`, `iat`, `exp`, `jti` e `iss`
+si se configura `JWT_ISSUER`. No lleva `user_id`: el gateway usa `sub` cuando
+falta. Tampoco `aud`, porque el gateway rechaza los tokens que la traen.
+El gateway todavía no enruta `POST /api/auth/token`, así que el token se pide
+directo al módulo.
 
 Cabecera opcional `X-Correlation-Id`: si viene, se propaga a la publicación y
 a todos sus eventos. Si no, generamos uno.

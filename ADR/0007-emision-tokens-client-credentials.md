@@ -2,21 +2,21 @@
 
 ## Estado
 
-Propuesta · 2026-10-08 · Sprint 2
+Aceptada · 2026-10-10 · Sprint 2 (propuesta el 2026-10-08)
 
-Complementa a ADR-0005, que sigue vigente: el módulo sigue verificando el
-JWT en `/api/publish/*` exactamente igual. Solo se usa si en la reunión de
-integración se acuerda que el Módulo 3 emite los tokens.
+El equipo confirmó que el Módulo 3 emite los tokens. Complementa a ADR-0005,
+que sigue vigente: el módulo sigue verificando el JWT en `/api/publish/*`
+exactamente igual.
 
 ## Contexto
 
 ADR-0005 asume que el API Gateway (Equipo D) emite los tokens. Pero ni el
 backlog ni la guía técnica asignan esa tarea: US-D1 pide que el gateway
-"valide JWT y rechace peticiones no autenticadas", no que los emita.
-Mientras eso no se acuerde, solo existe `scripts/generar_jwt.py`, que sirve
-para pruebas manuales y no para integración.
+"valide JWT y rechace peticiones no autenticadas", no que los emita. Hasta
+ahora solo existía `scripts/generar_jwt.py`, que sirve para pruebas manuales
+y no para integración.
 
-Al Módulo 3 lo llaman otros sistemas (el gateway, el Módulo 4), no personas.
+Al Módulo 3 lo llaman otros sistemas a través del gateway, no personas.
 No hay usuarios ni contraseñas en este módulo.
 
 ## Alternativas consideradas
@@ -56,20 +56,48 @@ Alternativa 3.
   refresh token: el cliente pide uno nuevo cuando vence.
 - Un `client_id` inexistente y un secreto incorrecto responden con el mismo
   mensaje y tardan lo mismo, para no revelar qué clientes existen.
-- Con `APP_ENV=prod`, el módulo se niega a firmar si `JWT_SECRET_KEY` sigue
-  con el valor por defecto.
+- Con `APP_ENV=prod`, el módulo se niega a firmar si `JWT_SECRET_KEY` es uno
+  de los valores de ejemplo (el default de `config.py` o el de
+  `.env.example`) o mide menos de 32 bytes, el mínimo de HS256 (RFC 7518
+  §3.2).
+
+## Integración con el gateway
+
+Verificado el 2026-10-10 contra el código de la imagen
+`ghcr.io/tilininsano312/pubtube-mod4:develop` y con una prueba local
+módulo → gateway → módulo (la misma que corre el CI):
+
+- El gateway valida HS256 con `JWT_SECRET` y solo exige `exp`. Si falta
+  `user_id` usa `sub`, así que no hace falta emitir `user_id`.
+- El gateway reenvía la cabecera `Authorization` al módulo, que verifica el
+  token otra vez. Por eso `JWT_SECRET` (gateway) y `JWT_SECRET_KEY` (este
+  módulo) deben tener el mismo valor.
+- El gateway no pasa `audience` a PyJWT, y PyJWT rechaza un token con `aud`
+  en ese caso. `JWT_AUDIENCE` queda vacío mientras Equipo D no lo valide;
+  `JWT_ISSUER` sí se puede usar.
+- El gateway no tiene ruta para `POST /api/auth/token` y la exige
+  autenticada, así que hoy los clientes piden el token directo al módulo.
+- El gateway valida `iat` sin margen de reloj. Si su reloj va atrasado
+  respecto del nuestro, un token recién emitido responde 401 durante esa
+  diferencia.
 
 ## Consecuencias
 
-- Hay que confirmar con Equipo D quién emite los tokens. Si el gateway los
-  emite, `AUTH_CLIENTS` queda vacío y el endpoint no entrega tokens a nadie.
-- Si este módulo los emite y el gateway los valida, los dos deben usar la
-  misma clave y algoritmo, y acordar qué claims espera el gateway. El CI de
-  integración firma sus tokens de prueba con `sub`, `user_id` y `role`; este
-  endpoint no emite `user_id`.
+- Este módulo pasa a ser el emisor de tokens del sistema: un token suyo vale
+  para todas las rutas que el gateway protege con la misma clave, no solo
+  para `/api/publish/*`.
+- Con HS256, cualquiera que tenga la clave puede firmar tokens, también el
+  gateway. Si eso deja de ser aceptable, el cambio es firmar con RS256: este
+  módulo guarda la clave privada y el gateway solo la pública.
+- Hay que acordar con Equipo D si el gateway expone `POST /api/auth/token`
+  (ruta pública que reenvía al módulo) y si agrega margen de reloj al validar
+  `iat`.
 - Revocar un cliente es sacarlo de `AUTH_CLIENTS` y reiniciar. Los tokens ya
   emitidos siguen valiendo hasta su `exp`; por eso la vigencia es corta.
 - No hay límite de intentos en el endpoint. US-D1 pide rate limiting en el
-  gateway; si el endpoint queda expuesto sin gateway, hay que agregarlo.
+  gateway, pero mientras el token se pida directo al módulo ese límite no lo
+  cubre.
+- El CI de integración pide un token a este módulo y lo usa a través del
+  gateway, así que detecta si el gateway cambia lo que exige del token.
 - Dependencia nueva: `python-multipart`, que FastAPI necesita para leer
   formularios.
