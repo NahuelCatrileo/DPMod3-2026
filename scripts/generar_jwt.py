@@ -1,7 +1,8 @@
 """Genera un JWT de prueba para llamar a la API en desarrollo.
 
-En integración el token lo emite el API Gateway (Equipo D). Este script solo
-sirve mientras tanto, para probar desde Swagger (/docs → Authorize) o curl:
+En integración el token se pide a POST /api/auth/token (ADR-0007). Este
+script es un atajo para pruebas locales, desde Swagger (/docs → Authorize) o
+curl, sin registrar un cliente en AUTH_CLIENTS:
 
     python scripts/generar_jwt.py --sub equipo-c --minutos 60
     curl -H "Authorization: Bearer <token>" http://localhost:8000/api/publish/<id>/status

@@ -4,6 +4,10 @@
 
 Propuesta · 2026-10-06 · Sprint 2
 
+Complementada por ADR-0007 (2026-10-10): los tokens no los emite el gateway
+sino este módulo, en `POST /api/auth/token`. La verificación descrita aquí no
+cambia.
+
 No reemplaza el OAuth 2.0 de Google (US-C3), que sigue siendo obligatorio
 para publicar en YouTube.
 
