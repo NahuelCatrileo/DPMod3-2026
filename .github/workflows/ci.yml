@@ -2,7 +2,7 @@ name: CI - PubTube Modulo 3
 
 on:
   push:
-    branches: [main, develop, dev]
+    branches: [main, dev]
   pull_request:
   workflow_dispatch:
 
@@ -127,7 +127,7 @@ jobs:
           docker logs gateway-under-test || true
 
       - name: Log in to GHCR
-        if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -135,7 +135,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish M3 image
-        if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
         uses: docker/build-push-action@v6
         with:
           context: .
