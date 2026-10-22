@@ -6,7 +6,6 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from starlette.middleware.sessions import SessionMiddleware
 
 from app.api.errors import register_error_handlers
 from app.api.routes_auth import router as auth_router
@@ -48,8 +47,6 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
-
-app.add_middleware(SessionMiddleware, secret_key=settings.SESSION_SECRET_KEY)
 
 register_error_handlers(app)
 app.include_router(publish_router)

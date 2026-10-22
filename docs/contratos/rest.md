@@ -1,6 +1,6 @@
 # Contrato REST — Módulo 3 (Equipo C)
 
-Versión 1 · Sprint 1 · Última actualización: 2026-10-10
+Versión 1 · Sprint 1 · Última actualización: 2026-10-22
 
 El OpenAPI generado está en `http://localhost:8000/openapi.json` y la UI en
 `http://localhost:8000/docs`. Exportarlo a `docs/contratos/openapi.json` en
@@ -15,10 +15,28 @@ cada PR que toque una firma.
 | `GET /api/health` | — | `200 { status, data }` | — |
 | `POST /api/auth/token` | formulario `grant_type=client_credentials`, `client_id`, `client_secret` (o HTTP Basic) | `200 { access_token, token_type, expires_in }` | ADR-0007 |
 | `POST /api/publish/{id}/now` | — | **No implementado** (US-C7, Could, Sprint 4) | US-C7 |
+| `POST /oauth2/authorize` | — (JWT con `role: admin`) | `200 { status, data: { authorizationUrl, expiresIn } }` | US-C3.3 |
+| `GET /oauth2/callback` | query `state`, `code` o `error` (los pone Google) | `200 { status, data: conexión }` | US-C3.3 |
+| `GET /oauth2/status` | — (JWT con `role: admin`) | `200 { status, data: conexión }` | US-C3 |
+| `POST /oauth2/refresh` | — (JWT con `role: admin`) | `200 { status, data: conexión }` | US-C3.3 |
+| `POST /oauth2/revoke` | — (JWT con `role: admin`) | `200 { status, data: conexión }` | US-C3.3 |
 
 Todas las rutas `/api/publish/*` exigen la cabecera
 `Authorization: Bearer <jwt>` (ADR-0005). `GET /api/health` y
 `POST /api/auth/token` quedan públicos.
+
+Las rutas `/oauth2/*` conectan la cuenta de YouTube donde se publica
+(ADR-0008). Son de operación del Equipo C: ningún otro módulo las llama, y
+el gateway no las enruta. Exigen un JWT con `role: admin`, porque conectar
+otra cuenta cambia el canal de todos los creadores. La excepción es
+`GET /oauth2/callback`, que la llama el navegador redirigido por Google. Esa
+ruta la protegen un `state` de un solo uso y PKCE.
+
+La "conexión" es
+`{ configured, connected, scopes, accessTokenExpiresAt, connectedAt, updatedAt }`.
+Nunca incluye tokens. `configured` indica si están `GOOGLE_CLIENT_ID`,
+`GOOGLE_CLIENT_SECRET` y `OAUTH_TOKEN_ENCRYPTION_KEY`. Paso a paso de uso en
+`docs/oauth-youtube.md`.
 
 El token lo emite este módulo: `POST /api/auth/token` lo entrega a los
 clientes de servicio registrados en `AUTH_CLIENTS` (ADR-0007). El API Gateway
@@ -74,6 +92,17 @@ para errores transitorios y `PUBLISH_QUOTA_RETRY_SECONDS` (3600 s) para
 | Falta el JWT, está vencido, mal firmado o sin `sub`/`exp` | 401 | `UNAUTHORIZED` |
 | `POST /api/auth/token`: cliente inexistente, secreto incorrecto o sin credenciales | 401 | `UNAUTHORIZED` |
 | `POST /api/auth/token`: `grant_type` distinto de `client_credentials` o faltante | 422 | `INVALID_METADATA` |
+| `/oauth2/*` con un JWT válido pero sin `role: admin` | 403 | `UNAUTHORIZED` |
+| Callback con `state` desconocido, vencido o ya usado; consentimiento rechazado (`error=access_denied`); código rechazado por Google; sin `youtube.upload` o sin refresh token | 400 | `OAUTH_ERROR` |
+| `POST /oauth2/refresh` sin cuenta conectada, o Google rechazó el refresh token (`invalid_grant`) | 409 | `OAUTH_ERROR` |
+| OAuth sin configurar, cliente rechazado por Google (`invalid_client`) o tokens que la clave no descifra | 503 | `OAUTH_ERROR` |
+| Google no respondió al canjear, refrescar o revocar | 502 | `PUBLISH_FAILED` |
+
+> **403 con `UNAUTHORIZED` (ADR-0008).** La lista registrada no tiene un
+> código para "autenticado pero sin permiso". El HTTP 403 lo distingue del
+> 401, y así no hace falta proponer un código nuevo por §5.4 para rutas que
+> solo usa el Equipo C. Por la misma razón, la caída de Google se informa con
+> `PUBLISH_FAILED`, que la política de reintentos ya trata como transitorio.
 
 > **Transición inválida (US-C6).** `InvalidTransitionError` hereda de
 > `DomainError` y reutiliza `SCHEDULE_CONFLICT` en su sentido de "conflicto de

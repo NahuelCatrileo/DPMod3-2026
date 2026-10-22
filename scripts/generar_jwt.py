@@ -7,6 +7,9 @@ curl, sin registrar un cliente en AUTH_CLIENTS:
     python scripts/generar_jwt.py --sub equipo-c --minutos 60
     curl -H "Authorization: Bearer <token>" http://localhost:8000/api/publish/<id>/status
 
+Las rutas /oauth2/* (conectar la cuenta de YouTube) piden `--role admin`
+(ADR-0008).
+
 Usa JWT_SECRET_KEY, JWT_ALGORITHM, JWT_ISSUER y JWT_AUDIENCE del .env.
 """
 
@@ -28,6 +31,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--sub", default="dev-local", help="Sujeto del token")
     parser.add_argument("--minutos", type=int, default=60, help="Vigencia")
+    parser.add_argument("--role", help="Claim `role`; admin para las rutas /oauth2/*")
     args = parser.parse_args()
 
     settings = get_settings()
@@ -37,6 +41,8 @@ def main() -> None:
         "iat": ahora,
         "exp": ahora + timedelta(minutes=args.minutos),
     }
+    if args.role:
+        claims["role"] = args.role
     if settings.JWT_ISSUER:
         claims["iss"] = settings.JWT_ISSUER
     if settings.JWT_AUDIENCE:

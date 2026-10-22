@@ -82,14 +82,17 @@ class Settings(BaseSettings):
     # (diferible, reintenta con delay de cuota).
     MOCK_FAILURE_CODE: ErrorCode = ErrorCode.QUOTA_EXCEEDED
 
-    # --- OAuth / YouTube (Sprint 3, US-C3) --------------------------------
-    GOOGLE_CLIENT_SECRETS_FILE: str = "credentials/client_secret.json"
-    GOOGLE_TOKEN_FILE: str = "credentials/token.json"
+    # --- OAuth 2.0 con Google para publicar en YouTube (US-C3, ADR-0008) ----
+    # Cliente OAuth de tipo "Aplicación web" de Google Cloud (paso a paso en
+    # docs/oauth-youtube.md). Vacíos = OAuth sin configurar: GET /oauth2/status
+    # lo informa y publicar en YouTube falla con OAUTH_ERROR.
+    GOOGLE_CLIENT_ID: str | None = None
+    GOOGLE_CLIENT_SECRET: str | None = None
+    # Debe ser idéntica a una de las URI de redirección autorizadas del cliente.
     OAUTH_REDIRECT_URI: str = "http://localhost:8000/oauth2/callback"
-    SESSION_SECRET_KEY: str = "cambiame-en-.env"
     # Clave Fernet que cifra los tokens de Google guardados en la base. Si
     # cambia, los tokens guardados no se pueden descifrar y hay que volver a
-    # autorizar la cuenta (US-C3.2, ADR-0008).
+    # autorizar la cuenta.
     OAUTH_TOKEN_ENCRYPTION_KEY: str | None = None
 
     # --- Autenticación de la API con JWT (ADR-0005) ------------------------

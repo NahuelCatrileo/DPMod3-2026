@@ -26,13 +26,16 @@ from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.config import get_settings
-from app.domain.errors import UnauthorizedError
+from app.domain.errors import ForbiddenError, UnauthorizedError
 
 logger = logging.getLogger(__name__)
 
 # auto_error=False: si falta la cabecera respondemos con el sobre de error
 # acordado (UNAUTHORIZED) en vez del {"detail": ...} de FastAPI.
 _bearer = HTTPBearer(auto_error=False, description="JWT emitido por POST /api/auth/token")
+
+# Rol que permite conectar o desconectar la cuenta de YouTube (ADR-0008).
+ADMIN_ROLE = "admin"
 
 
 def decode_token(token: str) -> dict[str, Any]:
@@ -71,3 +74,14 @@ def require_jwt(
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise UnauthorizedError("Falta la cabecera Authorization: Bearer <token>.")
     return decode_token(credentials.credentials)
+
+
+def require_admin(claims: dict[str, Any] = Depends(require_jwt)) -> dict[str, Any]:
+    """Dependencia de FastAPI: JWT válido y con `role: admin` (ADR-0008).
+
+    Conectar la cuenta de YouTube decide a qué canal se suben los videos de
+    todos los creadores, así que un token de servicio común no alcanza.
+    """
+    if claims.get("role") != ADMIN_ROLE:
+        raise ForbiddenError(f"Esta operación requiere un token con role '{ADMIN_ROLE}'.")
+    return claims

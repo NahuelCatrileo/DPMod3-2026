@@ -26,8 +26,9 @@ curl http://localhost:8000/api/health
 
 Documentación interactiva: <http://localhost:8000/docs>
 
-> `.env` **no se versiona**. Genere `SESSION_SECRET_KEY` con
-> `openssl rand -hex 32` y cambie `POSTGRES_PASSWORD`.
+> `.env` **no se versiona**. Genere `JWT_SECRET_KEY` con
+> `openssl rand -hex 32` y cambie `POSTGRES_PASSWORD`. Para publicar en
+> YouTube, siga [`docs/oauth-youtube.md`](docs/oauth-youtube.md).
 
 Las rutas `/api/publish/*` exigen `Authorization: Bearer <jwt>` (ADR-0005).
 Los tokens los emite este módulo (ADR-0007) y el API Gateway los valida, así
@@ -62,7 +63,7 @@ pytest --cov=app --cov-report=term-missing
 ruff check app tests
 ```
 
-Estado actual: **215 tests, 96 % de cobertura**. El umbral de la DoD es 70 %.
+Estado actual: **278 tests, 97 % de cobertura**. El umbral de la DoD es 70 %.
 
 ---
 
@@ -84,6 +85,9 @@ Estado actual: **215 tests, 96 % de cobertura**. El umbral de la DoD es 70 %.
 | `AUTH_CLIENTS` | JSON | ADR-0007. Clientes que pueden pedir tokens, con el hash de su secreto. Cada entrada sale de `scripts/generar_cliente.py`. |
 | `JWT_ACCESS_TOKEN_MINUTES` | 1–1440 | ADR-0007. Vigencia del token emitido. 30 por defecto. |
 | `JWT_ISSUER` / `JWT_AUDIENCE` | texto | Opcionales. `JWT_AUDIENCE` va vacío: el gateway rechaza los tokens que traen `aud`. |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | texto | US-C3, ADR-0008. Cliente OAuth "Aplicación web" de Google Cloud. Vacíos = OAuth sin configurar. |
+| `OAUTH_REDIRECT_URI` | URL | US-C3. Idéntica a la URI de redirección registrada en el cliente. |
+| `OAUTH_TOKEN_ENCRYPTION_KEY` | clave Fernet | US-C3.2. Cifra los tokens de Google en la base. Si cambia, hay que volver a autorizar la cuenta. |
 
 ---
 
@@ -96,7 +100,7 @@ Estado actual: **215 tests, 96 % de cobertura**. El umbral de la DoD es 70 %.
 | US-C2 · Scheduler de publicaciones | 8 | **Esqueleto — no comprometida** | Cancelación de jobs, pruebas de integración con reinicio real de contenedor |
 | US-C5 · Manejo de cuotas y errores | 5 | **Completa (adelantada)** | — |
 | US-C6 · Máquina de estados | 3 | **Completa** | — |
-| US-C3 · YouTube real | 8 | Esqueleto | Sprint 3 |
+| US-C3 · YouTube real | 8 | **En curso** (Sprint 3): OAuth listo, US-C3.1–C3.3 (ADR-0008) | Subida con `videos.insert` y verificación de las transiciones contra la API real |
 | US-C7 · Reintento manual | 3 | No iniciada | Sprint 4 |
 
 **`failed` es terminal, `pending` no.** El reintento manual de una publicación
@@ -155,6 +159,15 @@ desarrolló esa parte (Guía §4.6).
 > `pendingJobs` marca 0 antes de que alcancen a consultarlo. Para exhibir el
 > contador en positivo, usen una ventana de varios minutos.
 
+8. **US-C3 · Conectar YouTube (OAuth).** Con un token `--role admin`:
+   `GET /oauth2/status` en `connected: false`, luego `POST /oauth2/authorize`,
+   abrir la URL y aceptar con la cuenta del canal. Mostrar el callback con
+   `connected: true`, `POST /oauth2/refresh` con `accessTokenExpiresAt`
+   avanzando, y la tabla `oauth_credential` sin tokens legibles. Paso a paso
+   en [`docs/oauth-youtube.md`](docs/oauth-youtube.md). **Reconectar la
+   cuenta el día anterior:** en modo Prueba el refresh token vence a los 7
+   días.
+
 ---
 
 ## Puntos abiertos de contrato
@@ -203,7 +216,7 @@ app/
 │   └── publishers/        Publisher, MockPublisher, YouTubePublisher, factory
 ├── services/              Casos de uso: programar y ejecutar publicación
 ├── scheduler/             APScheduler con job store persistente
-└── oauth/                 Flujo OAuth 2.0 (preparación de Sprint 3)
+└── oauth/                 OAuth 2.0 con Google: consentimiento, refresh y tokens cifrados (US-C3)
 ```
 
 ## Documentación
@@ -212,6 +225,8 @@ app/
 - `docs/contratos/rest.md` — endpoints y mapeo de códigos de error
 - `docs/contratos/estados-publicacion.md` — matriz de estados, decisión sobre
   `failed` y verificación contra el publicador mock (US-C6)
+- `docs/oauth-youtube.md` — configurar Google Cloud y conectar la cuenta de
+  YouTube (US-C3)
 - `scrum/actas/` — actas de sprint, con las decisiones registradas
 - `ADR/` — decisiones con alternativas evaluadas
 - `USO-IA.md` — declaración de uso de IA generativa (Anexo D)

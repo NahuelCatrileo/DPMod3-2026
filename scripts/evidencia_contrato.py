@@ -33,7 +33,6 @@ os.environ.update(
         "MOCK_LATENCY_SECONDS": "0",
         "MOCK_FAILURE_RATE": "0",
         "SCHEDULER_ENABLED": "false",
-        "SESSION_SECRET_KEY": "evidencia",
         "LOG_LEVEL": "ERROR",
     }
 )

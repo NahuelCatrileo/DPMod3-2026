@@ -123,6 +123,17 @@ class UnauthorizedError(DomainError):
         )
 
 
+class ForbiddenError(DomainError):
+    """El JWT es válido pero no trae el rol que pide la ruta (ADR-0008).
+
+    La lista registrada no tiene un código FORBIDDEN (§5.4): se usa
+    UNAUTHORIZED con 403, que separa "no puede" de "no se identificó" (401).
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(ErrorCode.UNAUTHORIZED, message, http_status=403)
+
+
 class OAuthError(DomainError):
     """La autorización con Google no sirve y hace falta una persona (US-C3).
 
@@ -133,3 +144,14 @@ class OAuthError(DomainError):
 
     def __init__(self, message: str, http_status: int = 400) -> None:
         super().__init__(ErrorCode.OAUTH_ERROR, message, http_status=http_status)
+
+
+class OAuthUnavailableError(DomainError):
+    """Google no respondió al canjear, refrescar o revocar un token (US-C3).
+
+    Se informa como PUBLISH_FAILED, que es TRANSITORIO (ADR-0006): un corte de
+    red no debe dejar la publicación en `failed` ni obligar a reconectar.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(ErrorCode.PUBLISH_FAILED, message, http_status=502)

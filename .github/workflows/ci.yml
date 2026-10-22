@@ -30,7 +30,6 @@ jobs:
       EVENT_TRANSPORT: log
       MOCK_LATENCY_SECONDS: "0"
       SCHEDULER_ENABLED: "false"
-      SESSION_SECRET_KEY: module3-ci-session-secret
 
     steps:
       - uses: actions/checkout@v4
@@ -78,7 +77,7 @@ jobs:
             -p "$MODULE_PORT:$MODULE_PORT" \
             -e PORT="$MODULE_PORT" -e APP_ENV -e DATABASE_URL \
             -e PUBLISHER_MODE -e EVENT_TRANSPORT -e MOCK_LATENCY_SECONDS \
-            -e SCHEDULER_ENABLED -e SESSION_SECRET_KEY \
+            -e SCHEDULER_ENABLED \
             -e JWT_SECRET_KEY="$JWT_SECRET" -e AUTH_CLIENTS="$auth_clients" \
             pubtube-module-under-test:ci
 
