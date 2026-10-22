@@ -28,6 +28,16 @@
 | Dev           | [Alonso]   |
 | Dev           | [Francisco]|
 
+# ROLES — Sprint 3
+
+| Rol           | Integrante |
+|---------------|------------|
+| Product Owner | [Nahuel]   |
+| Scrum Master  | [Hector]   |
+| Dev           | [Christian]|
+| Dev           | [Alonso]   |
+| Dev           | [Francisco]|
+
 ## Historial de rotación
 
 | Sprint   | Product Owner | Scrum Master |
@@ -35,3 +45,4 @@
 | Sprint 0 | [Christian]   | [Alonso]     |
 | Sprint 1 | [Christian]   | [Alonso]     |
 | Sprint 2 | [Hector]      | [Nahuel]     |
+| Sprint 3 | [Nahuel]      | [Hector]     |
