@@ -87,6 +87,10 @@ class Settings(BaseSettings):
     GOOGLE_TOKEN_FILE: str = "credentials/token.json"
     OAUTH_REDIRECT_URI: str = "http://localhost:8000/oauth2/callback"
     SESSION_SECRET_KEY: str = "cambiame-en-.env"
+    # Clave Fernet que cifra los tokens de Google guardados en la base. Si
+    # cambia, los tokens guardados no se pueden descifrar y hay que volver a
+    # autorizar la cuenta (US-C3.2, ADR-0008).
+    OAUTH_TOKEN_ENCRYPTION_KEY: str | None = None
 
     # --- Autenticación de la API con JWT (ADR-0005) ------------------------
     # Los tokens los emite este módulo (ADR-0007) y los verifican el API

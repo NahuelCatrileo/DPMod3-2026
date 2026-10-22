@@ -12,6 +12,10 @@ os.environ.setdefault("MOCK_FAILURE_RATE", "0")
 os.environ.setdefault("SCHEDULER_ENABLED", "false")
 os.environ.setdefault("SESSION_SECRET_KEY", "test-secret")
 os.environ.setdefault("JWT_SECRET_KEY", "test-jwt-secret-de-al-menos-32-bytes")
+# US-C3.2 (ADR-0008). Se fuerza en vez de setdefault: el servicio `tests` de
+# docker compose carga .env, donde viene vacía.
+# Clave Fernet pública, solo para tests: base64 de "test-key-de-32-bytes-para-fernet".
+os.environ["OAUTH_TOKEN_ENCRYPTION_KEY"] = "dGVzdC1rZXktZGUtMzItYnl0ZXMtcGFyYS1mZXJuZXQ="
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

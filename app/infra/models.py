@@ -58,3 +58,31 @@ class Publication(Base):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Publication {self.id} content={self.content_id} state={self.state}>"
+
+
+class OAuthCredential(Base):
+    """US-C3.2 · Tokens de Google de la cuenta de YouTube (ADR-0008).
+
+    Tabla interna del módulo: no viaja en ningún contrato. Hoy hay una sola
+    fila, la de la cuenta dueña del canal (id 'youtube').
+
+    El refresh token y el access token van juntos y cifrados en
+    `encrypted_tokens` (Fernet, ver app/oauth/token_store.py). En claro solo
+    queda lo que no sirve para actuar en nombre de la cuenta.
+    """
+
+    __tablename__ = "oauth_credential"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    encrypted_tokens: Mapped[str] = mapped_column(Text, nullable=False)
+    # Scopes otorgados, separados por espacio (formato de OAuth 2.0).
+    scopes: Mapped[str] = mapped_column(Text, nullable=False)
+    # Vencimiento del access token. El refresh token no tiene uno conocido.
+    expires_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+    # Último consentimiento. Reconectar la cuenta lo reinicia; un refresh no.
+    connected_at: Mapped[datetime] = mapped_column(
+        UtcDateTime, nullable=False, default=_utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UtcDateTime, nullable=False, default=_utcnow, onupdate=_utcnow
+    )

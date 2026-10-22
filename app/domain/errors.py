@@ -121,3 +121,15 @@ class UnauthorizedError(DomainError):
             http_status=401,
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+
+class OAuthError(DomainError):
+    """La autorización con Google no sirve y hace falta una persona (US-C3).
+
+    OAUTH_ERROR es DEFINITIVO en la política de reintentos (ADR-0006):
+    reintentar no lo arregla; hay que configurar el cliente OAuth o volver a
+    autorizar la cuenta de YouTube (ADR-0008).
+    """
+
+    def __init__(self, message: str, http_status: int = 400) -> None:
+        super().__init__(ErrorCode.OAUTH_ERROR, message, http_status=http_status)
