@@ -2,7 +2,7 @@ name: CI - PubTube Modulo 3
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main, develop, dev]
   pull_request:
   workflow_dispatch:
 
@@ -19,6 +19,7 @@ jobs:
     name: Test, build and smoke-test M3 through Gateway
     runs-on: ubuntu-latest
     env:
+      MODULE_SLOT: "3"
       MODULE_PORT: "8003"
       GATEWAY_SMOKE_PATH: /api/publish/health
       GATEWAY_IMAGE: ghcr.io/tilininsano312/pubtube-mod4:develop
@@ -74,6 +75,7 @@ jobs:
           auth_clients="$(echo "$cred" | sed -n "s/^AUTH_CLIENTS='\(.*\)'$/\1/p")"
 
           docker run -d --name module-under-test --network it-net \
+            --network-alias module-under-test \
             -p "$MODULE_PORT:$MODULE_PORT" \
             -e PORT="$MODULE_PORT" -e APP_ENV -e DATABASE_URL \
             -e PUBLISHER_MODE -e EVENT_TRANSPORT -e MOCK_LATENCY_SECONDS \
@@ -84,7 +86,7 @@ jobs:
           docker run -d --name gateway-under-test --network it-net \
             -p 8000:8000 \
             -e GATEWAY_PORT=8000 -e JWT_SECRET -e JWT_ALGORITHM=HS256 \
-            -e MODULE3_URL="http://module-under-test:$MODULE_PORT" \
+            -e "MODULE${MODULE_SLOT}_URL=http://module-under-test:$MODULE_PORT" \
             "$GATEWAY_IMAGE"
 
       - name: Smoke-test M3 through Gateway
@@ -126,7 +128,7 @@ jobs:
           docker logs gateway-under-test || true
 
       - name: Log in to GHCR
-        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/dev')
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -134,7 +136,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish M3 image
-        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/dev')
         uses: docker/build-push-action@v6
         with:
           context: .
