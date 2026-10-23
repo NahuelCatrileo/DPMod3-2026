@@ -1,6 +1,6 @@
 # Contrato REST — Módulo 3 (Equipo C)
 
-Versión 1 · Sprint 1 · Última actualización: 2026-10-22
+Versión 1 · Sprint 1 · Última actualización: 2026-10-23
 
 El OpenAPI generado está en `http://localhost:8000/openapi.json` y la UI en
 `http://localhost:8000/docs`. Exportarlo a `docs/contratos/openapi.json` en
@@ -54,6 +54,95 @@ directo al módulo.
 
 Cabecera opcional `X-Correlation-Id`: si viene, se propaga a la publicación y
 a todos sus eventos. Si no, generamos uno.
+
+## Integración saliente con Módulo 1 (US-C3.4)
+
+M3 no comparte base de datos con M1. Para publicar consulta los metadatos
+versionados al endpoint REST del M1, usando la **URL interna** (no el Gateway):
+
+```http
+GET {MODULE1_BASE_URL}/api/content/{contentId}/metadata
+Accept: application/json
+X-Correlation-Id: <uuid generado por M3>
+```
+
+`MODULE1_BASE_URL` se configura en `.env` (por defecto
+`http://module1-api:8000`) y `MODULE1_TIMEOUT_SECONDS` define el timeout.
+
+Respuesta real del M1 (la que se parsea):
+
+```json
+{
+  "status": 200,
+  "contentId": "uuid-del-contenido",
+  "metadata": {
+    "id": "uuid-de-la-version",
+    "version": 1,
+    "title": "Clase 1",
+    "description": "Descripción de la clase",
+    "tags": ["pubtube", "clase"],
+    "visibility": "unlisted",
+    "createdAt": "2026-10-23T12:00:00.000Z"
+  }
+}
+```
+
+`metadata` puede ser `null` si el contenido todavía no tiene metadatos; en ese
+caso M3 no publica y devuelve `INVALID_METADATA`.
+
+### Dónde está usada
+
+| Parte | Archivo | Qué hace |
+|---|---|---|
+| Cliente REST y parseo | `app/infra/module1.py` → `get_content_metadata()` | Llama al endpoint, valida la respuesta y la convierte en `ContentMetadata`. |
+| Adaptador al publicador | `app/infra/publishers/youtube.py` → `content_from_m1()` | Combina esos metadatos con el archivo del video y arma `VideoContent`. |
+| Uso por defecto | `YouTubePublisher.__init__()` | Si no se inyecta otro `content_provider`, usa `content_from_m1`. |
+| Configuración | `app/config.py` | `MODULE1_BASE_URL`, `MODULE1_TIMEOUT_SECONDS`. |
+| Pruebas | `tests/test_module1_content.py` | Parseo, errores HTTP y combinación con el archivo local. |
+
+Mapeo de la respuesta de M1 a YouTube:
+
+| M1 | YouTube (`videos.insert`) |
+|---|---|
+| `title` | `snippet.title` |
+| `description` | `snippet.description` |
+| `tags` | `snippet.tags` |
+| `visibility` (`public`, `private`, `unlisted`) | `status.privacyStatus` |
+| `version` | Se registra/valida; no se envía a YouTube |
+
+Errores del M1 traducidos a códigos registrados:
+
+| Respuesta M1 | Código M3 |
+|---|---|
+| `404` | `CONTENT_NOT_FOUND` |
+| `400` / `422` | `INVALID_METADATA` |
+| `401` / `403` | `UNAUTHORIZED` |
+| `5xx`, timeout, red caída, JSON ilegible | `PUBLISH_FAILED` |
+
+### Punto pendiente: el archivo del video
+
+El endpoint `GET /api/content/{contentId}/metadata` **no devuelve el video**
+ni su `storageUrl`. El M1 tampoco expone hoy una descarga o URL prefirmada de
+lectura. Por eso `content_from_m1()` usa provisionalmente
+`<YOUTUBE_VIDEO_DIR>/<contentId>.<ext>` y falla con `CONTENT_NOT_FOUND` si no
+existe.
+
+Para cerrar US-C3.4 falta acordar con M1 una de estas dos formas y
+documentarla en este mismo archivo:
+
+1. Un endpoint de descarga/URL prefirmada, por ejemplo
+   `GET /api/content/{contentId}/video`.
+2. Incluir `storageUrl` en la respuesta de metadatos o en
+   `GET /api/content/{contentId}`, y que M3 tenga acceso al bucket.
+
+Cuando exista, solo se reemplaza `_local_video_path()` en
+`app/infra/publishers/youtube.py`; el cliente de metadatos y la subida a
+YouTube no cambian.
+
+> `metadata.updated` sigue sin incluir `description` (ver
+> `docs/contratos/eventos.md`). M3 usa REST para obtenerla. Si más adelante se
+> implementa el consumidor de ese evento, habrá que ampliar el contrato o
+> mantener esta consulta REST para la descripción.
 
 ## Sobre de error
 

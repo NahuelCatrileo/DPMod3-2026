@@ -2,9 +2,10 @@
 
 **Equipo C** · Curso Dirección de Proyectos · 2026-2
 
-Consume `metadata.*`, publica `publish.scheduled`, `publish.completed` y
-`publish.failed`. Programa publicaciones y las dispara a su hora contra
-YouTube Data API v3 (con modo simulado conmutable).
+Consume `metadata.*` (el consumidor de eventos sigue pendiente; US-C3.4 ya
+obtiene los metadatos por REST del M1), publica `publish.scheduled`,
+`publish.completed` y `publish.failed`. Programa publicaciones y las dispara a
+su hora contra YouTube Data API v3 (con modo simulado conmutable).
 
 ---
 
@@ -88,6 +89,9 @@ Estado actual: **278 tests, 97 % de cobertura**. El umbral de la DoD es 70 %.
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | texto | US-C3, ADR-0008. Cliente OAuth "Aplicación web" de Google Cloud. Vacíos = OAuth sin configurar. |
 | `OAUTH_REDIRECT_URI` | URL | US-C3. Idéntica a la URI de redirección registrada en el cliente. |
 | `OAUTH_TOKEN_ENCRYPTION_KEY` | clave Fernet | US-C3.2. Cifra los tokens de Google en la base. Si cambia, hay que volver a autorizar la cuenta. |
+| `MODULE1_BASE_URL` | URL interna | US-C3.4. Base del M1 para `GET /api/content/{contentId}/metadata`. Por defecto `http://module1-api:8000`; no se usa el Gateway para esta lectura interna. |
+| `MODULE1_TIMEOUT_SECONDS` | float > 0 | US-C3.4. Timeout de la consulta de metadatos al M1. |
+| `YOUTUBE_VIDEO_DIR` | ruta | US-C3.5. Carpeta con los videos a subir, nombrados `<contentId>.<ext>`. Sigue siendo provisional: los metadatos ya salen del M1, pero falta que M1 entregue el archivo o una URL de descarga. |
 
 ---
 
@@ -100,7 +104,7 @@ Estado actual: **278 tests, 97 % de cobertura**. El umbral de la DoD es 70 %.
 | US-C2 · Scheduler de publicaciones | 8 | **Esqueleto — no comprometida** | Cancelación de jobs, pruebas de integración con reinicio real de contenedor |
 | US-C5 · Manejo de cuotas y errores | 5 | **Completa (adelantada)** | — |
 | US-C6 · Máquina de estados | 3 | **Completa** | — |
-| US-C3 · YouTube real | 8 | **En curso** (Sprint 3): OAuth listo, US-C3.1–C3.3 (ADR-0008) | Subida con `videos.insert` y verificación de las transiciones contra la API real |
+| US-C3 · YouTube real | 8 | **En curso** (Sprint 3): OAuth listo (C3.1–C3.3), subida real con `videos.insert` reanudable (C3.5) y metadatos del M1 por REST (C3.4) | Archivo del video del M1 (C3.4), mapeo fino de errores (C3.6), pruebas y demo (C3.7–C3.8) |
 | US-C7 · Reintento manual | 3 | No iniciada | Sprint 4 |
 
 **`failed` es terminal, `pending` no.** El reintento manual de una publicación
@@ -213,6 +217,7 @@ app/
 ├── infra/
 │   ├── db.py models.py    Persistencia (tabla publication, Doc 3 §6)
 │   ├── events/            Envelope + publicador de eventos (doble y AMQP)
+│   ├── module1.py         Cliente REST de metadatos del M1 (US-C3.4)
 │   └── publishers/        Publisher, MockPublisher, YouTubePublisher, factory
 ├── services/              Casos de uso: programar y ejecutar publicación
 ├── scheduler/             APScheduler con job store persistente
