@@ -8,7 +8,8 @@ curl, sin registrar un cliente en AUTH_CLIENTS:
     curl -H "Authorization: Bearer <token>" http://localhost:8000/api/publish/<id>/status
 
 Las rutas /oauth2/* (conectar la cuenta de YouTube) piden `--role admin`
-(ADR-0008).
+(ADR-0008). Con `--role user` el token actúa como el de una persona: solo ve
+las publicaciones programadas con ese mismo `--sub` (ADR-0009).
 
 Usa JWT_SECRET_KEY, JWT_ALGORITHM, JWT_ISSUER y JWT_AUDIENCE del .env.
 """

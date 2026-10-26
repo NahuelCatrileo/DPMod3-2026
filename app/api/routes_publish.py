@@ -5,10 +5,12 @@ Rutas y códigos según Guía Técnica §5. No los cambien sin §5.4.
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, Header, status
 from sqlalchemy.orm import Session
 
-from app.api.auth import require_jwt
+from app.api.auth import owner_scope, require_jwt
 from app.api.schemas import (
     ErrorResponse,
     ScheduleRequest,
@@ -44,6 +46,7 @@ def schedule(
     body: ScheduleRequest,
     session: Session = Depends(get_session),
     x_correlation_id: str | None = Header(default=None, alias="X-Correlation-Id"),
+    claims: dict[str, Any] = Depends(require_jwt),
 ) -> ScheduleResponse:
     publication = scheduling.schedule_publication(
         session,
@@ -51,6 +54,7 @@ def schedule(
         schedule_at=body.scheduleAt,
         tz_name=body.timezone,
         correlation_id=x_correlation_id,
+        owner_id=claims["sub"],
     )
     return ScheduleResponse(
         publishId=publication.id,
@@ -68,9 +72,15 @@ def schedule(
     summary="Estado de una publicación (US-C6)",
 )
 def get_status(
-    publish_id: str, session: Session = Depends(get_session)
+    publish_id: str,
+    session: Session = Depends(get_session),
+    claims: dict[str, Any] = Depends(require_jwt),
 ) -> StatusResponse:
-    publication = scheduling.get_publication(session, publish_id)
+    # La publicación de otro usuario responde igual que una inexistente:
+    # un 403 confirmaría que ese publishId existe (ADR-0009).
+    publication = scheduling.get_publication(
+        session, publish_id, owner_id=owner_scope(claims)
+    )
     if publication is None:
         raise PublicationNotFoundError(publish_id)
     return StatusResponse(

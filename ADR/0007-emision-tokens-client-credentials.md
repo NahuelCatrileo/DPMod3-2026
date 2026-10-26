@@ -8,6 +8,12 @@ El equipo confirmó que el Módulo 3 emite los tokens. Complementa a ADR-0005,
 que sigue vigente: el módulo sigue verificando el JWT en `/api/publish/*`
 exactamente igual.
 
+Complementada por ADR-0009 (2026-10-22): la alternativa 2 (login de
+usuarios), descartada aquí porque al módulo no lo llamaban personas, se
+implementa ahora para el frontend del Módulo 4 (issue #11). Client
+credentials no cambia, y los dos tipos de token se firman con la misma
+función.
+
 ## Contexto
 
 ADR-0005 asume que el API Gateway (Equipo D) emite los tokens. Pero ni el

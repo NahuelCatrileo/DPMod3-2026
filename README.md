@@ -49,6 +49,22 @@ curl -X POST http://localhost:8000/api/auth/token \
 Para probar en local sin registrar un cliente, genere un token con
 `python scripts/generar_jwt.py` y péguelo en Authorize, en `/docs`.
 
+Las personas tienen cuenta propia (ADR-0009, issue #11):
+`POST /api/auth/register`, `POST /api/auth/login` (correo y contraseña),
+`GET /api/auth/me`, `POST /api/auth/refresh` y `POST /api/auth/logout`. El
+login entrega un JWT con `role: user` y deja la sesión en una cookie
+HttpOnly. Con ese token, un usuario solo ve las publicaciones que programó.
+Los tokens de servicio siguen viendo todas. Qué tiene que cambiar el gateway
+para publicar estas rutas está en
+[`docs/gateway-auth-usuarios.md`](docs/gateway-auth-usuarios.md).
+
+```bash
+curl -X POST http://localhost:8000/api/auth/register -H 'Content-Type: application/json' \
+  -d '{"username":"ana","email":"ana@example.com","password":"clave-segura-1"}'
+curl -c sesion.txt -X POST http://localhost:8000/api/auth/login -H 'Content-Type: application/json' \
+  -d '{"email":"ana@example.com","password":"clave-segura-1"}'
+```
+
 ## Correr los tests
 
 ```bash
@@ -63,7 +79,7 @@ pytest --cov=app --cov-report=term-missing
 ruff check app tests
 ```
 
-Estado actual: **278 tests, 97 % de cobertura**. El umbral de la DoD es 70 %.
+Estado actual: **315 tests, 97 % de cobertura**. El umbral de la DoD es 70 %.
 
 ---
 
@@ -83,7 +99,10 @@ Estado actual: **278 tests, 97 % de cobertura**. El umbral de la DoD es 70 %.
 | `SCHEDULER_MISFIRE_GRACE_SECONDS` | int | Margen para ejecutar jobs atrasados tras un reinicio. |
 | `JWT_SECRET_KEY` | `openssl rand -hex 32` | ADR-0005 y ADR-0007. Firma y verifica los JWT. Mismo valor que `JWT_SECRET` del gateway. Con `APP_ENV=prod` el módulo no firma con el valor de ejemplo ni con una clave de menos de 32 bytes. |
 | `AUTH_CLIENTS` | JSON | ADR-0007. Clientes que pueden pedir tokens, con el hash de su secreto. Cada entrada sale de `scripts/generar_cliente.py`. |
-| `JWT_ACCESS_TOKEN_MINUTES` | 1–1440 | ADR-0007. Vigencia del token emitido. 30 por defecto. |
+| `JWT_ACCESS_TOKEN_MINUTES` | 1–1440 | ADR-0007 y ADR-0009. Vigencia del token emitido, de servicio o de usuario. 30 por defecto. |
+| `AUTH_REFRESH_TOKEN_DAYS` | 1–90 | ADR-0009. Días que dura una sesión de usuario sin uso. Cada refresh reinicia el plazo. |
+| `AUTH_COOKIE_SECURE` | bool | ADR-0009. Atributo `Secure` de la cookie de sesión. `true` salvo en pruebas por HTTP que no sean `localhost`. |
+| `AUTH_COOKIE_SAMESITE` | `strict` \| `lax` \| `none` | ADR-0009. `strict` por defecto. `none` solo si la UI está en otro dominio que el gateway. |
 | `JWT_ISSUER` / `JWT_AUDIENCE` | texto | Opcionales. `JWT_AUDIENCE` va vacío: el gateway rechaza los tokens que traen `aud`. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | texto | US-C3, ADR-0008. Cliente OAuth "Aplicación web" de Google Cloud. Vacíos = OAuth sin configurar. |
 | `OAUTH_REDIRECT_URI` | URL | US-C3. Idéntica a la URI de redirección registrada en el cliente. |
@@ -102,6 +121,7 @@ Estado actual: **278 tests, 97 % de cobertura**. El umbral de la DoD es 70 %.
 | US-C6 · Máquina de estados | 3 | **Completa** | — |
 | US-C3 · YouTube real | 8 | **En curso** (Sprint 3): OAuth listo, US-C3.1–C3.3 (ADR-0008) | Subida con `videos.insert` y verificación de las transiciones contra la API real |
 | US-C7 · Reintento manual | 3 | No iniciada | Sprint 4 |
+| Issue #11 · Cuentas de usuario y sesiones (pedido del Módulo 4) | — | **Completa en el módulo** (ADR-0009) | Que el Equipo D publique las rutas en el gateway (`docs/gateway-auth-usuarios.md`) |
 
 **`failed` es terminal, `pending` no.** El reintento manual de una publicación
 fallida (US-C7) queda para el Sprint 4: `failed → pending` **no** está permitido
@@ -168,6 +188,12 @@ desarrolló esa parte (Guía §4.6).
    cuenta el día anterior:** en modo Prueba el refresh token vence a los 7
    días.
 
+9. **Issue #11 · Cuentas de usuario.** Registrar a Ana y a Beto y hacer login
+   con los dos. Ana programa una publicación; con su token, `GET /status`
+   responde 200 y con el de Beto, 404. Mostrar en la tabla `app_user` el hash
+   `$argon2id$` y en `refresh_token` solo el SHA-256 de la cookie. Hacer
+   refresh, después logout, y mostrar que la cookie anterior responde 401.
+
 ---
 
 ## Puntos abiertos de contrato
@@ -200,6 +226,14 @@ acta (Guía §5.4). No se resuelven por decisión unilateral.
    - **Reloj.** El gateway valida `iat` sin margen: si su reloj va atrasado
      respecto del nuestro, un token recién emitido responde 401.
 
+5. **Rutas de sesión en el gateway (issue #11, ADR-0009).** El módulo ya
+   expone `register`, `login`, `me`, `refresh` y `logout`. Falta que el
+   gateway publique las cuatro primeras sin JWT y enrute las cinco. El parche,
+   probado contra la suite del gateway y de extremo a extremo, está en
+   [`docs/gateway-auth-usuarios.md`](docs/gateway-auth-usuarios.md). También
+   hay que acordar si la UI va bajo el mismo dominio que el gateway: si no,
+   hace falta CORS con credenciales y `AUTH_COOKIE_SAMESITE=none`.
+
 ---
 
 ## Estructura
@@ -211,10 +245,10 @@ app/
 ├── api/                   Rutas, schemas y sobre de error estándar
 ├── domain/                Máquina de estados y códigos de error registrados
 ├── infra/
-│   ├── db.py models.py    Persistencia (tabla publication, Doc 3 §6)
+│   ├── db.py models.py    Persistencia (publication, Doc 3 §6; cuentas y sesiones, ADR-0009)
 │   ├── events/            Envelope + publicador de eventos (doble y AMQP)
 │   └── publishers/        Publisher, MockPublisher, YouTubePublisher, factory
-├── services/              Casos de uso: programar y ejecutar publicación
+├── services/              Casos de uso: programar y ejecutar publicación; emitir tokens y sesiones
 ├── scheduler/             APScheduler con job store persistente
 └── oauth/                 OAuth 2.0 con Google: consentimiento, refresh y tokens cifrados (US-C3)
 ```
@@ -227,6 +261,9 @@ app/
   `failed` y verificación contra el publicador mock (US-C6)
 - `docs/oauth-youtube.md` — configurar Google Cloud y conectar la cuenta de
   YouTube (US-C3)
+- `docs/gateway-auth-usuarios.md` — sesiones de usuario a través del gateway:
+  cambios para el Equipo D, uso desde el frontend y criterios de extremo a
+  extremo (issue #11)
 - `scrum/actas/` — actas de sprint, con las decisiones registradas
 - `ADR/` — decisiones con alternativas evaluadas
 - `USO-IA.md` — declaración de uso de IA generativa (Anexo D)

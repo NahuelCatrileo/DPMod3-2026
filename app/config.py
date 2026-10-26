@@ -114,8 +114,21 @@ class Settings(BaseSettings):
     # JSON {client_id: {"secret_hash": "...", "role": "..."}}. Vacío = nadie
     # puede pedir tokens y POST /api/auth/token siempre responde 401.
     AUTH_CLIENTS: Annotated[dict[str, AuthClient], NoDecode] = Field(default_factory=dict)
-    # Vigencia del token emitido, en minutos.
+    # Vigencia del token emitido, en minutos. Vale también para los tokens
+    # de usuario (ADR-0009).
     JWT_ACCESS_TOKEN_MINUTES: int = Field(default=30, ge=1, le=1440)
+
+    # --- Cuentas de usuario y sesiones (issue #11, ADR-0009) ---------------
+    # Vigencia del refresh token, en días. Cada refresh lo rota y reinicia el
+    # plazo: una sesión que no se usa en ese tiempo se cierra sola.
+    AUTH_REFRESH_TOKEN_DAYS: int = Field(default=7, ge=1, le=90)
+    # Atributos de la cookie del refresh token. Secure exige HTTPS; los
+    # navegadores la aceptan también en http://localhost. Con "strict" el
+    # navegador no la manda desde otro sitio, así que nadie puede forzar un
+    # refresh o un logout con CSRF. Si la UI queda en un dominio distinto del
+    # gateway hace falta "none", que a su vez exige Secure.
+    AUTH_COOKIE_SECURE: bool = True
+    AUTH_COOKIE_SAMESITE: Literal["strict", "lax", "none"] = "strict"
 
     @field_validator("AUTH_CLIENTS", mode="before")
     @classmethod

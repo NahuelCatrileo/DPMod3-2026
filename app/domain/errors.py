@@ -134,6 +134,17 @@ class ForbiddenError(DomainError):
         super().__init__(ErrorCode.UNAUTHORIZED, message, http_status=403)
 
 
+class DuplicateUserError(DomainError):
+    """El correo o el nombre de usuario ya tienen cuenta (ADR-0009).
+
+    La lista registrada no tiene un código para cuentas (§5.4): se usa
+    DUPLICATE_CONTENT, que ya significa "eso ya existe", con 409.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(ErrorCode.DUPLICATE_CONTENT, message, http_status=409)
+
+
 class OAuthError(DomainError):
     """La autorización con Google no sirve y hace falta una persona (US-C3).
 
