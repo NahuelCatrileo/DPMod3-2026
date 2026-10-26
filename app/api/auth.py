@@ -1,8 +1,9 @@
 """Verificación de JWT en la API del módulo (ADR-0005).
 
-El token lo emite este módulo en POST /api/auth/token (ADR-0007). El API
-Gateway (Equipo D, US-D1) lo valida y lo reenvía, y aquí se verifica de
-nuevo. Llega en la cabecera `Authorization: Bearer <token>`.
+El token lo emite este módulo: a sistemas en POST /api/auth/token (ADR-0007)
+y a personas en POST /api/auth/login (ADR-0009). El API Gateway (Equipo D,
+US-D1) lo valida y lo reenvía, y aquí se verifica de nuevo. Llega en la
+cabecera `Authorization: Bearer <token>`.
 
 Qué se exige:
 - Firma válida con JWT_SECRET_KEY y el algoritmo configurado. Se pasa una
@@ -26,13 +27,19 @@ from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.config import get_settings
-from app.domain.errors import UnauthorizedError
+from app.domain.errors import ForbiddenError, UnauthorizedError
+from app.services.tokens import USER_ROLE
 
 logger = logging.getLogger(__name__)
 
 # auto_error=False: si falta la cabecera respondemos con el sobre de error
 # acordado (UNAUTHORIZED) en vez del {"detail": ...} de FastAPI.
-_bearer = HTTPBearer(auto_error=False, description="JWT emitido por POST /api/auth/token")
+_bearer = HTTPBearer(
+    auto_error=False, description="JWT emitido por POST /api/auth/token o /api/auth/login"
+)
+
+# Rol que permite conectar o desconectar la cuenta de YouTube (ADR-0008).
+ADMIN_ROLE = "admin"
 
 
 def decode_token(token: str) -> dict[str, Any]:
@@ -71,3 +78,36 @@ def require_jwt(
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise UnauthorizedError("Falta la cabecera Authorization: Bearer <token>.")
     return decode_token(credentials.credentials)
+
+
+def require_admin(claims: dict[str, Any] = Depends(require_jwt)) -> dict[str, Any]:
+    """Dependencia de FastAPI: JWT válido y con `role: admin` (ADR-0008).
+
+    Conectar la cuenta de YouTube decide a qué canal se suben los videos de
+    todos los creadores, así que un token de servicio común no alcanza.
+    """
+    if claims.get("role") != ADMIN_ROLE:
+        raise ForbiddenError(f"Esta operación requiere un token con role '{ADMIN_ROLE}'.")
+    return claims
+
+
+def require_user(claims: dict[str, Any] = Depends(require_jwt)) -> dict[str, Any]:
+    """Dependencia de FastAPI: JWT válido de un usuario (ADR-0009).
+
+    Un token de servicio no representa a una persona, así que no tiene
+    cuenta que mostrar en /api/auth/me.
+    """
+    if claims.get("role") != USER_ROLE:
+        raise ForbiddenError(
+            "Esta operación requiere el token de un usuario (POST /api/auth/login)."
+        )
+    return claims
+
+
+def owner_scope(claims: dict[str, Any]) -> str | None:
+    """Dueño al que se limita la consulta, o None si el token ve todo (ADR-0009).
+
+    Con un token de usuario es su `sub`: solo ve lo que programó él. Los
+    servicios y el admin siguen viendo todas las publicaciones, como antes.
+    """
+    return claims["sub"] if claims.get("role") == USER_ROLE else None

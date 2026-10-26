@@ -17,4 +17,6 @@ ignore = [
 
 [tool.coverage.run]
 source = ["app"]
-omit = ["app/oauth/*", "app/infra/publishers/youtube.py"]
+# El cliente de la YouTube Data API y el publicador real son el resto de US-C3
+# (videos.insert); el flujo OAuth de app/oauth/ ya se mide.
+omit = ["app/oauth/youtube_client.py", "app/infra/publishers/youtube.py"]

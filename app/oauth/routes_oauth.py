@@ -1,98 +1,157 @@
-"""OAuth 2.0 con Google (preparación de US-C3, Sprint 3).
+"""US-C3 · Rutas OAuth 2.0 con Google (ADR-0008).
 
-Se conserva el trabajo ya hecho por el equipo, con tres correcciones:
+| Ruta                   | Acceso             | Qué hace                                    |
+|------------------------|--------------------|---------------------------------------------|
+| POST /oauth2/authorize | JWT con role admin | Devuelve la URL de consentimiento de Google |
+| GET  /oauth2/callback  | público            | Canjea el código y guarda tokens cifrados   |
+| GET  /oauth2/status    | JWT con role admin | Si hay cuenta conectada; nunca los tokens   |
+| POST /oauth2/refresh   | JWT con role admin | Fuerza un refresh: ¿el acceso sigue vivo?   |
+| POST /oauth2/revoke    | JWT con role admin | Revoca en Google y borra los tokens         |
 
-1. Rutas y secretos vienen de la configuración, no hardcodeados.
-2. El token se guarda como JSON, no con pickle. `pickle.load` sobre un archivo
-   que un atacante pueda escribir ejecuta código arbitrario; además el pickle
-   de un objeto Credentials se rompe al actualizar la librería.
-3. El token va a `credentials/`, que ya está en .gitignore.
+El callback es la única ruta pública porque quien llega es el navegador que
+Google redirige, y ese navegador no lleva el JWT. Lo protegen el `state` de un
+solo uso y PKCE (ver consent.py).
 
-Este módulo NO participa del incremento del Sprint 1 (PUBLISHER_MODE=mock).
+Antes (Sprint 0) todo /oauth2/* era público (ADR-0005) y cualquiera podía
+conectar su propia cuenta en lugar de la del canal; ver ADR-0008.
 """
 
 from __future__ import annotations
 
-import json
-import logging
-import os
-from pathlib import Path
+from datetime import datetime
+from typing import Any
 
-from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
 
-from app.config import get_settings
-
-logger = logging.getLogger(__name__)
+from app.api.auth import require_admin
+from app.api.schemas import ErrorResponse
+from app.oauth import consent, credentials, google
+from app.oauth.token_store import GoogleTokens, has_encryption_key, load_tokens
 
 router = APIRouter(prefix="/oauth2", tags=["oauth"])
 
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+_ADMIN_ERRORS: dict[int | str, dict[str, Any]] = {
+    401: {"model": ErrorResponse, "description": "UNAUTHORIZED: falta el JWT o no es válido"},
+    403: {"model": ErrorResponse, "description": "UNAUTHORIZED: el JWT no trae role admin"},
+    503: {"model": ErrorResponse, "description": "OAUTH_ERROR: OAuth sin configurar"},
+}
 
 
-def _flow():
-    from google_auth_oauthlib.flow import Flow
-
-    settings = get_settings()
-    if settings.APP_ENV == "dev":
-        # Permite redirect_uri http://localhost en desarrollo.
-        os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
-    return Flow.from_client_secrets_file(
-        settings.GOOGLE_CLIENT_SECRETS_FILE,
-        scopes=SCOPES,
-        redirect_uri=settings.OAUTH_REDIRECT_URI,
-    )
+class AuthorizationUrl(BaseModel):
+    authorizationUrl: str
+    # Segundos que vale la URL: después el callback la rechaza.
+    expiresIn: int
 
 
-@router.get("/authorize")
-def authorize(request: Request):
-    flow = _flow()
-    authorization_url, state = flow.authorization_url(
-        access_type="offline",
-        include_granted_scopes="true",
-        prompt="consent",
-    )
-    request.session["state"] = state
-    request.session["code_verifier"] = flow.code_verifier
-    return RedirectResponse(authorization_url)
+class AuthorizationUrlResponse(BaseModel):
+    status: str = "ok"
+    data: AuthorizationUrl
 
 
-@router.get("/callback")
-def callback(request: Request):
-    code_verifier = request.session.get("code_verifier")
-    if not code_verifier:
-        return JSONResponse(
-            status_code=400,
-            content={
-                "status": "error",
-                "code": "OAUTH_ERROR",
-                "message": "No se encontró el code_verifier de la sesión.",
-            },
+class Connection(BaseModel):
+    """Estado de la conexión con YouTube. Nunca incluye tokens."""
+
+    # GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET y OAUTH_TOKEN_ENCRYPTION_KEY.
+    configured: bool
+    connected: bool
+    scopes: list[str] = Field(default_factory=list)
+    accessTokenExpiresAt: datetime | None = None
+    connectedAt: datetime | None = None
+    updatedAt: datetime | None = None
+
+
+class ConnectionResponse(BaseModel):
+    status: str = "ok"
+    data: Connection
+
+
+def _connection(tokens: GoogleTokens | None) -> ConnectionResponse:
+    configured = google.is_configured() and has_encryption_key()
+    if tokens is None:
+        return ConnectionResponse(data=Connection(configured=configured, connected=False))
+    return ConnectionResponse(
+        data=Connection(
+            configured=configured,
+            connected=True,
+            scopes=list(tokens.scopes),
+            accessTokenExpiresAt=tokens.expires_at,
+            connectedAt=tokens.connected_at,
+            updatedAt=tokens.updated_at,
         )
-
-    flow = _flow()
-    flow.fetch_token(
-        authorization_response=str(request.url), code_verifier=code_verifier
     )
 
-    settings = get_settings()
-    token_path = Path(settings.GOOGLE_TOKEN_FILE)
-    token_path.parent.mkdir(parents=True, exist_ok=True)
-    token_path.write_text(flow.credentials.to_json(), encoding="utf-8")
-    os.chmod(token_path, 0o600)
 
-    logger.info("oauth_token_guardado path=%s", token_path)
-    return {"status": "ok", "data": {"message": "Autenticación con Google completada"}}
-
-
-def load_credentials():
-    """Usado por YouTubePublisher en Sprint 3."""
-    from google.oauth2.credentials import Credentials
-
-    settings = get_settings()
-    path = Path(settings.GOOGLE_TOKEN_FILE)
-    if not path.exists():
-        return None
-    return Credentials.from_authorized_user_info(
-        json.loads(path.read_text(encoding="utf-8")), SCOPES
+@router.post(
+    "/authorize",
+    response_model=AuthorizationUrlResponse,
+    responses=_ADMIN_ERRORS,
+    summary="URL de consentimiento de Google para conectar la cuenta de YouTube (US-C3.3)",
+)
+def authorize(claims: dict[str, Any] = Depends(require_admin)) -> AuthorizationUrlResponse:
+    # Devuelve la URL en vez de redirigir: quien llama manda un JWT, cosa que
+    # un navegador no hace al navegar, así que la URL se abre aparte.
+    url = consent.start_consent(claims["sub"])
+    return AuthorizationUrlResponse(
+        data=AuthorizationUrl(authorizationUrl=url, expiresIn=consent.STATE_TTL_SECONDS)
     )
+
+
+@router.get(
+    "/callback",
+    response_model=ConnectionResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "OAUTH_ERROR"},
+        502: {"model": ErrorResponse, "description": "PUBLISH_FAILED: Google no respondió"},
+        503: {"model": ErrorResponse, "description": "OAUTH_ERROR: OAuth sin configurar"},
+    },
+    summary="Vuelta del consentimiento de Google (la llama el navegador)",
+)
+def callback(
+    state: str | None = None, code: str | None = None, error: str | None = None
+) -> ConnectionResponse:
+    return _connection(consent.complete_consent(state=state, code=code, error=error))
+
+
+@router.get(
+    "/status",
+    response_model=ConnectionResponse,
+    responses=_ADMIN_ERRORS,
+    dependencies=[Depends(require_admin)],
+    summary="¿Hay una cuenta de YouTube conectada? (US-C3)",
+)
+def oauth_status() -> ConnectionResponse:
+    return _connection(load_tokens())
+
+
+@router.post(
+    "/refresh",
+    response_model=ConnectionResponse,
+    responses={
+        **_ADMIN_ERRORS,
+        409: {"model": ErrorResponse, "description": "OAUTH_ERROR: no hay cuenta conectada"},
+        502: {"model": ErrorResponse, "description": "PUBLISH_FAILED: Google no respondió"},
+    },
+    dependencies=[Depends(require_admin)],
+    summary="Forzar un refresh del access token (US-C3.3)",
+)
+def refresh() -> ConnectionResponse:
+    # El mismo camino que usa el publicador: si esto funciona, publicar
+    # no va a fallar por la autorización.
+    credentials.get_credentials(force_refresh=True)
+    return _connection(load_tokens())
+
+
+@router.post(
+    "/revoke",
+    response_model=ConnectionResponse,
+    responses={
+        **_ADMIN_ERRORS,
+        502: {"model": ErrorResponse, "description": "PUBLISH_FAILED: Google no respondió"},
+    },
+    dependencies=[Depends(require_admin)],
+    summary="Desconectar la cuenta de YouTube: revoca en Google y borra los tokens",
+)
+def revoke() -> ConnectionResponse:
+    credentials.revoke()
+    return _connection(None)

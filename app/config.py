@@ -82,11 +82,18 @@ class Settings(BaseSettings):
     # (diferible, reintenta con delay de cuota).
     MOCK_FAILURE_CODE: ErrorCode = ErrorCode.QUOTA_EXCEEDED
 
-    # --- OAuth / YouTube (Sprint 3, US-C3) --------------------------------
-    GOOGLE_CLIENT_SECRETS_FILE: str = "credentials/client_secret.json"
-    GOOGLE_TOKEN_FILE: str = "credentials/token.json"
+    # --- OAuth 2.0 con Google para publicar en YouTube (US-C3, ADR-0008) ----
+    # Cliente OAuth de tipo "Aplicación web" de Google Cloud (paso a paso en
+    # docs/oauth-youtube.md). Vacíos = OAuth sin configurar: GET /oauth2/status
+    # lo informa y publicar en YouTube falla con OAUTH_ERROR.
+    GOOGLE_CLIENT_ID: str | None = None
+    GOOGLE_CLIENT_SECRET: str | None = None
+    # Debe ser idéntica a una de las URI de redirección autorizadas del cliente.
     OAUTH_REDIRECT_URI: str = "http://localhost:8000/oauth2/callback"
-    SESSION_SECRET_KEY: str = "cambiame-en-.env"
+    # Clave Fernet que cifra los tokens de Google guardados en la base. Si
+    # cambia, los tokens guardados no se pueden descifrar y hay que volver a
+    # autorizar la cuenta.
+    OAUTH_TOKEN_ENCRYPTION_KEY: str | None = None
 
     # --- Autenticación de la API con JWT (ADR-0005) ------------------------
     # Los tokens los emite este módulo (ADR-0007) y los verifican el API
@@ -107,8 +114,21 @@ class Settings(BaseSettings):
     # JSON {client_id: {"secret_hash": "...", "role": "..."}}. Vacío = nadie
     # puede pedir tokens y POST /api/auth/token siempre responde 401.
     AUTH_CLIENTS: Annotated[dict[str, AuthClient], NoDecode] = Field(default_factory=dict)
-    # Vigencia del token emitido, en minutos.
+    # Vigencia del token emitido, en minutos. Vale también para los tokens
+    # de usuario (ADR-0009).
     JWT_ACCESS_TOKEN_MINUTES: int = Field(default=30, ge=1, le=1440)
+
+    # --- Cuentas de usuario y sesiones (issue #11, ADR-0009) ---------------
+    # Vigencia del refresh token, en días. Cada refresh lo rota y reinicia el
+    # plazo: una sesión que no se usa en ese tiempo se cierra sola.
+    AUTH_REFRESH_TOKEN_DAYS: int = Field(default=7, ge=1, le=90)
+    # Atributos de la cookie del refresh token. Secure exige HTTPS; los
+    # navegadores la aceptan también en http://localhost. Con "strict" el
+    # navegador no la manda desde otro sitio, así que nadie puede forzar un
+    # refresh o un logout con CSRF. Si la UI queda en un dominio distinto del
+    # gateway hace falta "none", que a su vez exige Secure.
+    AUTH_COOKIE_SECURE: bool = True
+    AUTH_COOKIE_SAMESITE: Literal["strict", "lax", "none"] = "strict"
 
     @field_validator("AUTH_CLIENTS", mode="before")
     @classmethod

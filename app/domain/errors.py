@@ -121,3 +121,48 @@ class UnauthorizedError(DomainError):
             http_status=401,
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+
+class ForbiddenError(DomainError):
+    """El JWT es válido pero no trae el rol que pide la ruta (ADR-0008).
+
+    La lista registrada no tiene un código FORBIDDEN (§5.4): se usa
+    UNAUTHORIZED con 403, que separa "no puede" de "no se identificó" (401).
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(ErrorCode.UNAUTHORIZED, message, http_status=403)
+
+
+class DuplicateUserError(DomainError):
+    """El correo o el nombre de usuario ya tienen cuenta (ADR-0009).
+
+    La lista registrada no tiene un código para cuentas (§5.4): se usa
+    DUPLICATE_CONTENT, que ya significa "eso ya existe", con 409.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(ErrorCode.DUPLICATE_CONTENT, message, http_status=409)
+
+
+class OAuthError(DomainError):
+    """La autorización con Google no sirve y hace falta una persona (US-C3).
+
+    OAUTH_ERROR es DEFINITIVO en la política de reintentos (ADR-0006):
+    reintentar no lo arregla; hay que configurar el cliente OAuth o volver a
+    autorizar la cuenta de YouTube (ADR-0008).
+    """
+
+    def __init__(self, message: str, http_status: int = 400) -> None:
+        super().__init__(ErrorCode.OAUTH_ERROR, message, http_status=http_status)
+
+
+class OAuthUnavailableError(DomainError):
+    """Google no respondió al canjear, refrescar o revocar un token (US-C3).
+
+    Se informa como PUBLISH_FAILED, que es TRANSITORIO (ADR-0006): un corte de
+    red no debe dejar la publicación en `failed` ni obligar a reconectar.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(ErrorCode.PUBLISH_FAILED, message, http_status=502)

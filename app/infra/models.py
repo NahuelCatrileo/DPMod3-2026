@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime
 from datetime import timezone as dt_timezone
 
-from sqlalchemy import Integer, String, Text
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.domain.states import PublishState
@@ -49,6 +49,10 @@ class Publication(Base):
     correlation_id: Mapped[str] = mapped_column(
         String(36), nullable=False, default=lambda: str(uuid.uuid4())
     )
+    # `sub` del JWT que la programó: el id del usuario o el client_id del
+    # servicio (ADR-0009). Con un token de usuario solo se ven las propias.
+    # NULL en las filas anteriores a la migración 0003.
+    owner_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         UtcDateTime, nullable=False, default=_utcnow
     )
@@ -58,3 +62,86 @@ class Publication(Base):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Publication {self.id} content={self.content_id} state={self.state}>"
+
+
+class User(Base):
+    """Issue #11 · Cuenta de una persona que usa PubTube (ADR-0009).
+
+    Correo y nombre de usuario se guardan en minúsculas, así la unicidad no
+    depende de mayúsculas. La contraseña nunca se guarda: solo su hash
+    Argon2id.
+    """
+
+    # "user" es palabra reservada en PostgreSQL.
+    __tablename__ = "app_user"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    email: Mapped[str] = mapped_column(String(254), nullable=False, unique=True)
+    username: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Desactivar una cuenta corta el login y el refresh sin borrar su historial.
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        UtcDateTime, nullable=False, default=_utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UtcDateTime, nullable=False, default=_utcnow, onupdate=_utcnow
+    )
+
+
+class RefreshToken(Base):
+    """Issue #11 · Una sesión de usuario (ADR-0009).
+
+    El token es opaco y viaja en una cookie HttpOnly. Aquí solo queda su
+    SHA-256: quien lea la tabla no puede usarlo. Cada refresh revoca la fila
+    y crea otra con el mismo `family_id`; presentar una fila ya revocada
+    revoca toda la familia, porque significa que alguien copió el token.
+    """
+
+    __tablename__ = "refresh_token"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("app_user.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    family_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    # "Recordar sesión": la cookie sobrevive al cierre del navegador.
+    persistent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    expires_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        UtcDateTime, nullable=False, default=_utcnow
+    )
+
+
+class OAuthCredential(Base):
+    """US-C3.2 · Tokens de Google de la cuenta de YouTube (ADR-0008).
+
+    Tabla interna del módulo: no viaja en ningún contrato. Hoy hay una sola
+    fila, la de la cuenta dueña del canal (id 'youtube').
+
+    El refresh token y el access token van juntos y cifrados en
+    `encrypted_tokens` (Fernet, ver app/oauth/token_store.py). En claro solo
+    queda lo que no sirve para actuar en nombre de la cuenta.
+    """
+
+    __tablename__ = "oauth_credential"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    encrypted_tokens: Mapped[str] = mapped_column(Text, nullable=False)
+    # Scopes otorgados, separados por espacio (formato de OAuth 2.0).
+    scopes: Mapped[str] = mapped_column(Text, nullable=False)
+    # Vencimiento del access token. El refresh token no tiene uno conocido.
+    expires_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+    # Último consentimiento. Reconectar la cuenta lo reinicia; un refresh no.
+    connected_at: Mapped[datetime] = mapped_column(
+        UtcDateTime, nullable=False, default=_utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UtcDateTime, nullable=False, default=_utcnow, onupdate=_utcnow
+    )

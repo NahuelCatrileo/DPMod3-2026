@@ -6,11 +6,11 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from starlette.middleware.sessions import SessionMiddleware
 
 from app.api.errors import register_error_handlers
 from app.api.routes_auth import router as auth_router
 from app.api.routes_publish import router as publish_router
+from app.api.routes_users import router as users_router
 from app.config import get_settings
 from app.infra.publishers.factory import get_publisher
 from app.oauth.routes_oauth import router as oauth_router
@@ -49,11 +49,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.add_middleware(SessionMiddleware, secret_key=settings.SESSION_SECRET_KEY)
-
 register_error_handlers(app)
 app.include_router(publish_router)
 app.include_router(auth_router)
+app.include_router(users_router)
 app.include_router(oauth_router)
 
 @app.get("/health", tags=["health"])

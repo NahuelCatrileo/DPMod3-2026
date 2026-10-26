@@ -10,8 +10,14 @@ os.environ.setdefault("EVENT_TRANSPORT", "log")
 os.environ.setdefault("MOCK_LATENCY_SECONDS", "0")
 os.environ.setdefault("MOCK_FAILURE_RATE", "0")
 os.environ.setdefault("SCHEDULER_ENABLED", "false")
-os.environ.setdefault("SESSION_SECRET_KEY", "test-secret")
 os.environ.setdefault("JWT_SECRET_KEY", "test-jwt-secret-de-al-menos-32-bytes")
+# US-C3 (ADR-0008). Se fuerzan en vez de setdefault: ningún test habla con
+# Google (los que lo necesitan reemplazan app.oauth.google o la librería), y
+# el servicio `tests` de docker compose carga .env, donde vienen vacías.
+os.environ["GOOGLE_CLIENT_ID"] = "test-client.apps.googleusercontent.com"
+os.environ["GOOGLE_CLIENT_SECRET"] = "test-client-secret"
+# Clave Fernet pública, solo para tests: base64 de "test-key-de-32-bytes-para-fernet".
+os.environ["OAUTH_TOKEN_ENCRYPTION_KEY"] = "dGVzdC1rZXktZGUtMzItYnl0ZXMtcGFyYS1mZXJuZXQ="
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -86,6 +92,13 @@ def anon_client(events, publisher):
 def client(anon_client):
     """Cliente autenticado con un JWT válido (ADR-0005)."""
     anon_client.headers["Authorization"] = f"Bearer {make_token()}"
+    yield anon_client
+
+
+@pytest.fixture
+def admin_client(anon_client):
+    """Cliente con un JWT de role admin: el que piden las rutas /oauth2/* (ADR-0008)."""
+    anon_client.headers["Authorization"] = f"Bearer {make_token(role='admin')}"
     yield anon_client
 
 

@@ -60,7 +60,9 @@ def _assert_future(schedule_at_utc: datetime) -> None:
         )
 
 
-def _assert_no_active_schedule(session: Session, content_id: str) -> None:
+def _assert_no_active_schedule(
+    session: Session, content_id: str, owner_id: str | None
+) -> None:
     """SCHEDULE_CONFLICT en su sentido literal: ya hay una programación viva."""
     stmt = select(Publication).where(
         Publication.content_id == content_id,
@@ -68,9 +70,12 @@ def _assert_no_active_schedule(session: Session, content_id: str) -> None:
     )
     existing = session.execute(stmt).scalars().first()
     if existing is not None:
+        # El publishId solo se muestra a quien la programó (ADR-0009).
+        cual = (
+            f"la publicación {existing.id}" if existing.owner_id == owner_id else "una publicación"
+        )
         raise ScheduleConflictError(
-            f"El contenido {content_id} ya tiene la publicación {existing.id} "
-            f"en estado '{existing.state}'."
+            f"El contenido {content_id} ya tiene {cual} en estado '{existing.state}'."
         )
 
 
@@ -82,11 +87,15 @@ def schedule_publication(
     tz_name: str,
     correlation_id: str | None = None,
     causation_id: str | None = None,
+    owner_id: str | None = None,
 ) -> Publication:
-    """Valida, persiste y emite publish.scheduled. Devuelve la Publication."""
+    """Valida, persiste y emite publish.scheduled. Devuelve la Publication.
+
+    `owner_id` es el `sub` del JWT que la pide (ADR-0009).
+    """
     schedule_at_utc = normalize_schedule_at(schedule_at, tz_name)
     _assert_future(schedule_at_utc)
-    _assert_no_active_schedule(session, content_id)
+    _assert_no_active_schedule(session, content_id, owner_id)
 
     publication = Publication(
         id=str(uuid.uuid4()),
@@ -96,6 +105,7 @@ def schedule_publication(
         timezone=tz_name,
         attempts=0,
         correlation_id=correlation_id or str(uuid.uuid4()),
+        owner_id=owner_id,
     )
     session.add(publication)
     session.commit()
@@ -135,8 +145,14 @@ def schedule_publication(
     return publication
 
 
-def get_publication(session: Session, publish_id: str) -> Publication | None:
-    return session.get(Publication, publish_id)
+def get_publication(
+    session: Session, publish_id: str, owner_id: str | None = None
+) -> Publication | None:
+    """Con `owner_id`, la publicación de otro dueño se trata como inexistente."""
+    publication = session.get(Publication, publish_id)
+    if publication is None or (owner_id is not None and publication.owner_id != owner_id):
+        return None
+    return publication
 
 
 def cancel_publication(session: Session, publish_id: str) -> Publication:

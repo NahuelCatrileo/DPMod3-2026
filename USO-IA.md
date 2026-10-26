@@ -16,6 +16,10 @@ El uso de IA está permitido; lo que se sanciona es no declararlo.
 | S2 | Claude | US-C5: clasificación de errores (transitorio / diferible / definitivo) en `app/domain/errors.py`, política de reintentos en `app/services/retry.py` y su aplicación en el handler y en la reconciliación, más el borrador de ADR-0006. La herramienta ejecutó la suite completa con cobertura | *(completar: quién revisó el mapeo de cada código del catálogo y quién corrió la demo de reintentos)* | *(completar)* |
 | S2 | Claude | Emisión de JWT a clientes de servicio: `POST /api/auth/token` (`app/api/routes_auth.py`), hash y verificación de secretos (`app/services/client_credentials.py`), sus pruebas (`tests/test_auth_token.py`), el script `scripts/generar_cliente.py` y el borrador de ADR-0007 (estado Propuesta). La herramienta ejecutó la suite completa con cobertura | *(completar: quién revisó el código y confirmó con Equipo D quién emite los tokens)* | *(completar)* |
 | S2 | Claude | Revisión de la emisión de tokens contra el código del gateway de Equipo D (imagen `pubtube-mod4:develop`) y prueba local módulo → gateway → módulo con Docker; corrección de la guarda de producción de `JWT_SECRET_KEY`; paso de CI que usa un token emitido por el módulo a través del gateway; ADR-0007 pasa a Aceptada y se actualizan ADR-0005, el contrato REST, el README y los comentarios que decían que el gateway emite los tokens. La herramienta ejecutó la suite completa y la prueba de integración | *(completar: quién revisó los hallazgos sobre el gateway y los llevó a Equipo D)* | *(completar)* |
+| S3 | Claude | US-C3.1–C3.3: revisión del código OAuth del Sprint 0, donde encontró que el flujo nunca terminaba (sin PKCE) y que el callback no validaba `state`. Borrador de `app/oauth/` (cliente de Google, consentimiento con PKCE y `state` en el servidor, refresh con lock, tokens cifrados con Fernet en `oauth_credential`), la migración `0002`, el rol admin en `/oauth2/*` y las pruebas `tests/test_oauth_*.py`. La herramienta ejecutó la suite completa y comprobó con mutaciones que las pruebas fallan si se quita PKCE, la validación de `state`, el cifrado, el rol admin o el lock. También probó contra Google real, con credenciales inventadas, la forma de los errores que se traducen | *
+| S3 | Claude | Redacción del borrador de ADR-0008 (estado Propuesta) y de la guía `docs/oauth-youtube.md` | *
+| S3 | Claude | Issue #11 (pedido del Módulo 4): diagnóstico de lo que existía contra el issue, el gateway (`PubTube-Mod4`, `develop`) y las vistas de login del frontend (`PubTube-ui`, `feature/auth-views`). Borrador de las cuentas y sesiones: tablas `app_user` y `refresh_token` y `publication.owner_id` (migración `0003`), Argon2id, refresh token rotado en cookie HttpOnly con detección de reuso, rutas `/api/auth/{register,login,me,refresh,logout}`, firma común en `app/services/tokens.py`, permisos por dueño en `/api/publish/*`, pruebas `tests/test_user_auth.py` y `tests/test_publish_ownership.py`, y paso de CI de extremo a extremo con el gateway. La herramienta ejecutó la suite completa y comprobó con mutaciones que las pruebas fallan si se quita el control de dueño, la detección de reuso, la revocación del logout, el vencimiento o el hash. Probó la migración contra PostgreSQL 16 (upgrade y downgrade) y el flujo completo contra la imagen del gateway, original y parcheada | *(completar: quién revisó el código y las decisiones de ADR-0009, y quién le llevó el parche del gateway al Equipo D)* | *(completar)* |
+| S3 | Claude | Borrador de ADR-0009 (estado Propuesta) y de `docs/gateway-auth-usuarios.md`, con el parche del gateway probado contra su suite | *(completar)* | *(completar)* |
 
 > **Antes de entregar esto, léanlo de nuevo.** Las columnas vacías son suyas
 > y no las puede llenar la herramienta. La regla práctica del Review es que si
@@ -34,6 +38,13 @@ El uso de IA está permitido; lo que se sanciona es no declararlo.
 > tomar y poder defender el equipo. Al menos una persona debe poder explicar
 > sin apoyo por qué el scheduler arranca en pausa y por qué la reconciliación
 > solo toca las filas en `publishing` al arrancar.
+
+> **Nota S3 (US-C3.1–C3.3).** ADR-0008 queda en estado Propuesta. Al menos
+> una persona debe poder explicar sin apoyo: para qué sirven el `state` y
+> PKCE, y por qué el `state` se guarda en el servidor y no en la cookie; por
+> qué los tokens van cifrados en la base y no en `token.json`; por qué
+> `invalid_grant` borra la credencial y un corte de red no; y por qué la
+> cuenta hay que reconectarla antes de la demo.
 
 Declaramos que la información anterior es completa y veraz, y que todo
 incremento presentado cumple la Definition of Done y puede ser explicado por

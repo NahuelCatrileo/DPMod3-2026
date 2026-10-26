@@ -30,7 +30,6 @@ jobs:
       EVENT_TRANSPORT: log
       MOCK_LATENCY_SECONDS: "0"
       SCHEDULER_ENABLED: "false"
-      SESSION_SECRET_KEY: module3-ci-session-secret
 
     steps:
       - uses: actions/checkout@v4
@@ -78,8 +77,9 @@ jobs:
             -p "$MODULE_PORT:$MODULE_PORT" \
             -e PORT="$MODULE_PORT" -e APP_ENV -e DATABASE_URL \
             -e PUBLISHER_MODE -e EVENT_TRANSPORT -e MOCK_LATENCY_SECONDS \
-            -e SCHEDULER_ENABLED -e SESSION_SECRET_KEY \
+            -e SCHEDULER_ENABLED \
             -e JWT_SECRET_KEY="$JWT_SECRET" -e AUTH_CLIENTS="$auth_clients" \
+            -e AUTH_COOKIE_SECURE=false \
             pubtube-module-under-test:ci
 
           docker run -d --name gateway-under-test --network it-net \
@@ -118,6 +118,53 @@ jobs:
           curl --fail --silent --show-error --output /dev/null \
             -H "Authorization: Bearer $m3_token" \
             "http://127.0.0.1:8000/api/publish/$publish_id/status"
+
+      - name: Smoke-test user session (issue #11, ADR-0009)
+        run: |
+          set -euo pipefail
+          m3="http://127.0.0.1:$MODULE_PORT"
+          gw="http://127.0.0.1:8000"
+          json=(-H "Content-Type: application/json")
+
+          # El gateway todavía no publica /api/auth/{register,login,refresh,logout}
+          # (docs/gateway-auth-usuarios.md): la cuenta y la sesión van directo al
+          # módulo, y el JWT de usuario se usa a través del gateway.
+          for u in ana beto; do
+            curl --fail --silent --show-error --output /dev/null "${json[@]}" \
+              -d "{\"username\":\"$u\",\"email\":\"$u@ci.test\",\"password\":\"clave-de-ci-$u\"}" \
+              "$m3/api/auth/register"
+          done
+          login() {
+            curl --fail --silent --show-error -c "$RUNNER_TEMP/$1.jar" "${json[@]}" \
+              -d "{\"email\":\"$1@ci.test\",\"password\":\"clave-de-ci-$1\"}" \
+              "$m3/api/auth/login" | jq -r .access_token
+          }
+          ana="$(login ana)"
+          beto="$(login beto)"
+          curl --fail --silent --show-error -H "Authorization: Bearer $ana" "$m3/api/auth/me" \
+            | jq -e '.data.username == "ana"'
+
+          schedule_at="$(date -u -d '+1 hour' +%Y-%m-%dT%H:%M:%SZ)"
+          publish_id="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer $ana" "${json[@]}" \
+            -d "{\"contentId\":\"user-ci-${GITHUB_RUN_ID}\",\"scheduleAt\":\"$schedule_at\",\"timezone\":\"UTC\"}" \
+            "$gw/api/publish/schedule" | jq -r .publishId)"
+          status() {
+            curl --silent --output /dev/null --write-out '%{http_code}' \
+              -H "Authorization: Bearer $1" "$gw/api/publish/$publish_id/status"
+          }
+          test "$(status "$ana")" = 200
+          # Un usuario no ve la publicación de otro.
+          test "$(status "$beto")" = 404
+
+          # El refresh rota la cookie. Tras el logout, la cookie anterior ya no sirve.
+          jar="$RUNNER_TEMP/ana.jar"
+          curl --fail --silent --show-error -b "$jar" -c "$jar" -X POST "$m3/api/auth/refresh" \
+            | jq -e '.access_token | length > 0'
+          cp "$jar" "$jar.antes"
+          curl --fail --silent --show-error -b "$jar" -c "$jar" -X POST "$m3/api/auth/logout"
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            -b "$jar.antes" -X POST "$m3/api/auth/refresh")" = 401
 
       - name: Show logs on failure
         if: failure()

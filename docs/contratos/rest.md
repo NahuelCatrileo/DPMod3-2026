@@ -1,6 +1,6 @@
 # Contrato REST — Módulo 3 (Equipo C)
 
-Versión 1 · Sprint 1 · Última actualización: 2026-10-10
+Versión 1 · Sprint 1 · Última actualización: 2026-10-22
 
 El OpenAPI generado está en `http://localhost:8000/openapi.json` y la UI en
 `http://localhost:8000/docs`. Exportarlo a `docs/contratos/openapi.json` en
@@ -14,11 +14,61 @@ cada PR que toque una firma.
 | `GET /api/publish/{id}/status` | — | `200 { publishId, state, scheduleAt, timezone, attempts, youtubeVideoId?, lastError?, correlationId }` | US-C6 |
 | `GET /api/health` | — | `200 { status, data }` | — |
 | `POST /api/auth/token` | formulario `grant_type=client_credentials`, `client_id`, `client_secret` (o HTTP Basic) | `200 { access_token, token_type, expires_in }` | ADR-0007 |
+| `POST /api/auth/register` | `{ username, email, password }` | `201 { status, data: cuenta }` | ADR-0009 |
+| `POST /api/auth/login` | `{ email, password, remember? }` | `200 { access_token, token_type, expires_in }` + cookie `pubtube_refresh` | ADR-0009 |
+| `GET /api/auth/me` | — (JWT con `role: user`) | `200 { status, data: cuenta }` | ADR-0009 |
+| `POST /api/auth/refresh` | cookie `pubtube_refresh` | `200 { access_token, token_type, expires_in }` + cookie rotada | ADR-0009 |
+| `POST /api/auth/logout` | cookie `pubtube_refresh` | `204` + cookie borrada | ADR-0009 |
 | `POST /api/publish/{id}/now` | — | **No implementado** (US-C7, Could, Sprint 4) | US-C7 |
+| `POST /oauth2/authorize` | — (JWT con `role: admin`) | `200 { status, data: { authorizationUrl, expiresIn } }` | US-C3.3 |
+| `GET /oauth2/callback` | query `state`, `code` o `error` (los pone Google) | `200 { status, data: conexión }` | US-C3.3 |
+| `GET /oauth2/status` | — (JWT con `role: admin`) | `200 { status, data: conexión }` | US-C3 |
+| `POST /oauth2/refresh` | — (JWT con `role: admin`) | `200 { status, data: conexión }` | US-C3.3 |
+| `POST /oauth2/revoke` | — (JWT con `role: admin`) | `200 { status, data: conexión }` | US-C3.3 |
 
 Todas las rutas `/api/publish/*` exigen la cabecera
-`Authorization: Bearer <jwt>` (ADR-0005). `GET /api/health` y
-`POST /api/auth/token` quedan públicos.
+`Authorization: Bearer <jwt>` (ADR-0005). `GET /api/health`,
+`POST /api/auth/token`, `register`, `login`, `refresh` y `logout` quedan
+públicos.
+
+### Cuentas de usuario (ADR-0009)
+
+La "cuenta" es `{ id, username, email, role, createdAt }`. Nunca incluye la
+contraseña ni su hash. `username` (3 a 32 caracteres `[A-Za-z0-9_.-]`) y
+`email` se guardan en minúsculas y son únicos. `password` va de 8 a 128
+caracteres. Los campos extra del registro se ignoran: el rol siempre es
+`user`.
+
+El login y el refresh responden con la misma forma que `POST /api/auth/token`
+y `Cache-Control: no-store`. El JWT lleva `sub` (id del usuario),
+`role: user`, `iat`, `exp`, `jti` e `iss` si se configura. El refresh token
+viaja solo en la cookie
+`pubtube_refresh; HttpOnly; Secure; SameSite=Strict; Path=/api/auth`, con
+`Max-Age` solo si `remember` es `true`. Cada refresh lo rota, y presentar uno
+ya rotado revoca toda la sesión. Un 401 de `refresh` también borra la cookie.
+
+**Qué ve cada token en `/api/publish/*`:**
+
+| `role` del JWT | `POST /schedule` | `GET /{id}/status` |
+|---|---|---|
+| `user` | Queda como dueño (`sub`) | Solo las suyas. La de otro: `404 CONTENT_NOT_FOUND` |
+| cualquier otro (`service`, `admin`, sin rol) | Queda como dueño (`sub`) | Todas, como antes |
+
+Las rutas de cuentas a través del gateway están en
+[`../gateway-auth-usuarios.md`](../gateway-auth-usuarios.md).
+
+Las rutas `/oauth2/*` conectan la cuenta de YouTube donde se publica
+(ADR-0008). Son de operación del Equipo C: ningún otro módulo las llama, y
+el gateway no las enruta. Exigen un JWT con `role: admin`, porque conectar
+otra cuenta cambia el canal de todos los creadores. La excepción es
+`GET /oauth2/callback`, que la llama el navegador redirigido por Google. Esa
+ruta la protegen un `state` de un solo uso y PKCE.
+
+La "conexión" es
+`{ configured, connected, scopes, accessTokenExpiresAt, connectedAt, updatedAt }`.
+Nunca incluye tokens. `configured` indica si están `GOOGLE_CLIENT_ID`,
+`GOOGLE_CLIENT_SECRET` y `OAUTH_TOKEN_ENCRYPTION_KEY`. Paso a paso de uso en
+`docs/oauth-youtube.md`.
 
 El token lo emite este módulo: `POST /api/auth/token` lo entrega a los
 clientes de servicio registrados en `AUTH_CLIENTS` (ADR-0007). El API Gateway
@@ -74,6 +124,30 @@ para errores transitorios y `PUBLISH_QUOTA_RETRY_SECONDS` (3600 s) para
 | Falta el JWT, está vencido, mal firmado o sin `sub`/`exp` | 401 | `UNAUTHORIZED` |
 | `POST /api/auth/token`: cliente inexistente, secreto incorrecto o sin credenciales | 401 | `UNAUTHORIZED` |
 | `POST /api/auth/token`: `grant_type` distinto de `client_credentials` o faltante | 422 | `INVALID_METADATA` |
+| `register`: correo o nombre de usuario ya registrado | 409 | `DUPLICATE_CONTENT` |
+| `register` / `login`: campo faltante o mal formado | 422 | `INVALID_METADATA` |
+| `login`: correo desconocido, contraseña incorrecta o cuenta desactivada | 401 | `UNAUTHORIZED` |
+| `refresh`: sin cookie, o cookie desconocida, vencida, revocada o reutilizada | 401 | `UNAUTHORIZED` |
+| `GET /api/auth/me` con un JWT válido sin `role: user` | 403 | `UNAUTHORIZED` |
+| `GET /api/auth/me` de una cuenta borrada o desactivada | 401 | `UNAUTHORIZED` |
+| `GET /api/publish/{id}/status` de otro usuario (token `role: user`) | 404 | `CONTENT_NOT_FOUND` |
+| `/oauth2/*` con un JWT válido pero sin `role: admin` | 403 | `UNAUTHORIZED` |
+| Callback con `state` desconocido, vencido o ya usado; consentimiento rechazado (`error=access_denied`); código rechazado por Google; sin `youtube.upload` o sin refresh token | 400 | `OAUTH_ERROR` |
+| `POST /oauth2/refresh` sin cuenta conectada, o Google rechazó el refresh token (`invalid_grant`) | 409 | `OAUTH_ERROR` |
+| OAuth sin configurar, cliente rechazado por Google (`invalid_client`) o tokens que la clave no descifra | 503 | `OAUTH_ERROR` |
+| Google no respondió al canjear, refrescar o revocar | 502 | `PUBLISH_FAILED` |
+
+> **403 con `UNAUTHORIZED` (ADR-0008).** La lista registrada no tiene un
+> código para "autenticado pero sin permiso". El HTTP 403 lo distingue del
+> 401, y así no hace falta proponer un código nuevo por §5.4 para rutas que
+> solo usa el Equipo C. Por la misma razón, la caída de Google se informa con
+> `PUBLISH_FAILED`, que la política de reintentos ya trata como transitorio.
+
+> **Cuentas sin códigos nuevos (ADR-0009).** Un correo ya registrado usa
+> `DUPLICATE_CONTENT`, que en la lista ya significa "eso ya existe". La
+> publicación de otro usuario responde 404 y no 403: un 403 confirmaría que
+> ese `publishId` existe. Si el Equipo D prefiere un código propio para
+> cuentas, se propone por §5.4.
 
 > **Transición inválida (US-C6).** `InvalidTransitionError` hereda de
 > `DomainError` y reutiliza `SCHEDULE_CONFLICT` en su sentido de "conflicto de

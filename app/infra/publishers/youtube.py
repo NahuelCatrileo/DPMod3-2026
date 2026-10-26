@@ -23,7 +23,10 @@ class YouTubePublisher(Publisher):
 
     def publish_video(self, content_id: str) -> PublishResult:
         # Sprint 3 · US-C3:
-        #   1. Cargar credenciales OAuth y refrescarlas si expiraron.
+        #   1. Credenciales OAuth (hecho en US-C3.3, ADR-0008): get_credentials()
+        #      de app/oauth/credentials.py ya refresca, y si falla lanza un
+        #      DomainError con el código listo para
+        #      PublishResult.failure(exc.code, exc.message).
         #   2. Obtener del Módulo 1 los metadatos y la URL del archivo.
         #   3. Llamar a youtube.videos().insert(...) con MediaFileUpload.
         #   4. Mapear errores de la API (US-C5):
