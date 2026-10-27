@@ -47,7 +47,11 @@ Ejemplos:
 { "contentId": "c-002", "errorCode": "QUOTA_EXCEEDED", "attempt": 3, "reason": "..." }
 ```
 
-`errorCode` solo toma valores de la lista registrada (Doc 1 §6.3).
+`errorCode` solo toma valores de la lista registrada (Doc 1 §6.3). El mapeo de
+las respuestas de la YouTube Data API a esos códigos (HTTP + `reason` →
+`ErrorCode`) está en `ADR/0008-oauth-youtube-consentimiento-tokens.md`
+→ «Mapeo de errores de la YouTube Data API» (US-C3.6), y su prueba de contrato
+en `tests/test_youtube_api.py`.
 
 ### Reintentos (US-C5)
 

@@ -2,6 +2,11 @@
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-q"
+markers = [
+    # US-C3.7: prueba contra el canal real de YouTube. Se salta sola salvo que
+    # se exporte YOUTUBE_REAL_CHANNEL_TEST=1 (ver docs/oauth-youtube.md).
+    "manual: prueba manual contra un servicio real; no corre en CI",
+]
 
 [tool.ruff]
 line-length = 100

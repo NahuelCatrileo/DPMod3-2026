@@ -181,7 +181,10 @@ def test_si_falla_la_credencial_se_devuelve_su_codigo(tmp_path):
     assert resultado.error_code is ErrorCode.OAUTH_ERROR
 
 
-# --- Mapeo de errores de la API (lo afina US-C3.6) --------------------------
+# --- Mapeo de errores de la API --------------------------------------------
+# Esta prueba comprueba el mapeo de punta a punta (publicador -> PublishResult).
+# La tabla completa, la robustez del parseo y el resto de US-C3.6/C3.7 están en
+# tests/test_youtube_api.py.
 
 
 @pytest.mark.parametrize(

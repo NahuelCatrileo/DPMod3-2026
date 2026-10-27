@@ -20,6 +20,12 @@ mapeo de metadatos y la subida no cambian.
 La costura es el primer argumento del constructor: se puede inyectar un
 `content_provider` que devuelva el mismo `VideoContent` (lo hacen los tests y
 lo hará la integración cuando cambie el origen del archivo).
+
+US-C3.6: la YouTube Data API rechaza con HTTP + un `reason` propio, no con
+nuestros códigos. `map_http_error()` traduce esa respuesta a un `ErrorCode` de
+la lista registrada; de ahí la clase de reintento (US-C5, ADR-0006) se resuelve
+sola. La tabla y sus reglas están documentadas en el bloque de constantes de
+abajo y en `ADR/0008-oauth-youtube-consentimiento-tokens.md`.
 """
 
 from __future__ import annotations
@@ -27,7 +33,7 @@ from __future__ import annotations
 import json
 import logging
 import mimetypes
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -54,11 +60,65 @@ _DEFAULT_CATEGORY_ID = "22"
 # pedir "public" no cambiaría el resultado, así que el default es honesto.
 _DEFAULT_PRIVACY_STATUS = "private"
 
-# Razones de la API que la política de reintentos (ADR-0006) distingue.
+# --- US-C3.6 · Traducción de HttpError a los códigos de US-C5 --------------
+#
+# La YouTube Data API no responde con nuestros códigos: responde un status HTTP
+# y un `reason` propio. Esta tabla traduce (status, reason) a un ErrorCode
+# registrado (Doc 1 §6.3) y de ahí, sin código extra, la política de reintentos
+# de US-C5 decide qué hacer (ADR-0006):
+#
+#   QUOTA_EXCEEDED                       -> DIFERIBLE   (reintenta, espera larga)
+#   OAUTH_ERROR                          -> DEFINITIVO  (necesita una persona)
+#   CONTENT_NOT_FOUND / INVALID_METADATA -> DEFINITIVO  (no se arregla sola)
+#   PUBLISH_FAILED                       -> TRANSITORIO (reintenta con backoff)
+#
+# Dos reglas gobiernan la tabla:
+#
+# 1. **El `reason` manda sobre el status.** Google usa 403 tanto para cuota
+#    agotada como para permisos, y 400 para varios rechazos de metadatos: el
+#    status solo no alcanza para distinguirlos.
+# 2. **Lo desconocido es transitorio.** Si no se puede leer la respuesta, el
+#    código es PUBLISH_FAILED y la publicación se reintenta: es preferible
+#    gastar un intento a dar por perdida una subida por una respuesta que no
+#    supimos interpretar. Un 5xx, un timeout o una respuesta sin `reason`
+#    caen aquí.
+#
+# La traducción NO se hace en `app/domain/`: el dominio no puede importar
+# googleapiclient. El dominio define los códigos y su clase; infra traduce.
 _QUOTA_REASONS = frozenset(
-    {"quotaExceeded", "dailyLimitExceeded", "rateLimitExceeded", "uploadLimitExceeded"}
+    {
+        "quotaExceeded",
+        "dailyLimitExceeded",
+        "rateLimitExceeded",
+        "userRateLimitExceeded",
+        "uploadLimitExceeded",
+    }
 )
-_AUTH_REASONS = frozenset({"authError", "unauthorized", "invalid_grant", "insufficientPermissions"})
+_AUTH_REASONS = frozenset(
+    {
+        "authError",
+        "unauthorized",
+        "invalid_grant",
+        "invalidCredentials",
+        "insufficientPermissions",
+        "forbidden",
+        "PERMISSION_DENIED",
+        "UNAUTHENTICATED",
+    }
+)
+_CONTENT_REASONS = frozenset({"videoNotFound", "notFound"})
+_METADATA_REASONS = frozenset(
+    {
+        "invalidMetadata",
+        "invalidVideoMetadata",
+        "invalidFilename",
+        "invalidTitle",
+        "invalidDescription",
+        "invalidTags",
+        "invalidCategoryId",
+        "invalidDefaultLanguage",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -203,7 +263,7 @@ class YouTubePublisher(Publisher):
             )
             return PublishResult.failure(exc.code, exc.message)
         except HttpError as exc:
-            return self._http_failure(exc, content_id)
+            return _http_failure(exc, content_id)
         except FileNotFoundError as exc:
             logger.warning(
                 "youtube_publish_archivo_inexistente content_id=%s motivo=%s",
@@ -266,56 +326,125 @@ class YouTubePublisher(Publisher):
                 )
         return respuesta
 
-    @staticmethod
-    def _http_failure(exc: HttpError, content_id: str) -> PublishResult:
-        status = getattr(getattr(exc, "resp", None), "status", None)
-        reason = _http_error_reason(exc)
-        mensaje = _http_error_message(exc) or str(exc)
-        codigo = _error_code_for(status, reason)
-        logger.warning(
-            "youtube_publish_http_error content_id=%s status=%s reason=%s error_code=%s",
-            content_id,
-            status,
-            reason or "-",
-            codigo.value,
-        )
-        return PublishResult.failure(
-            codigo,
-            f"YouTube rechazó la subida ({status} {reason or 'sin detalle'}): {mensaje}",
-        )
+
+def _http_failure(exc: HttpError, content_id: str) -> PublishResult:
+    señales = http_failure_signals(exc)
+    codigo = map_http_error(exc)
+    logger.warning(
+        "youtube_publish_http_error content_id=%s status=%s reasons=%s error_code=%s",
+        content_id,
+        señales.status,
+        ",".join(señales.reasons) or "-",
+        codigo.value,
+    )
+    detalle = ", ".join(señales.reasons) or "sin detalle"
+    return PublishResult.failure(
+        codigo,
+        f"YouTube rechazó la subida ({señales.status} {detalle}): {señales.message}",
+    )
 
 
-def _error_code_for(status: int | None, reason: str) -> ErrorCode:
-    """Mapea la respuesta de la API a los códigos registrados (US-C3.6)."""
-    if reason in _QUOTA_REASONS or status == 429:
+@dataclass(frozen=True)
+class HttpFailure:
+    """Lo que se pudo leer de un `HttpError`, ya normalizado."""
+
+    status: int | None
+    reasons: tuple[str, ...]
+    message: str
+
+
+def http_failure_signals(exc: HttpError) -> HttpFailure:
+    """Extrae status, `reason`s y mensaje del cuerpo de error de Google.
+
+    Junta los `reason` de `error.errors[]`, los de `error.details[]` y el
+    `error.status` (Google a veces solo manda `PERMISSION_DENIED` ahí). Cualquier
+    forma inesperada del cuerpo se ignora: quien llama decide por status.
+    """
+    cuerpo = _http_error_payload(exc)
+
+    reasons: list[str] = []
+    for coleccion in ("errors", "details"):
+        entradas = cuerpo.get(coleccion)
+        if isinstance(entradas, list):
+            for entrada in entradas:
+                if isinstance(entrada, dict):
+                    _agregar_reason(reasons, entrada.get("reason"))
+    # `error.status` viene como enum de Google: PERMISSION_DENIED, INVALID_ARGUMENT...
+    _agregar_reason(reasons, cuerpo.get("status"))
+
+    return HttpFailure(
+        status=_http_status(exc, cuerpo),
+        reasons=tuple(dict.fromkeys(reasons)),
+        message=str(cuerpo.get("message") or "").strip() or str(exc),
+    )
+
+
+def map_http_error(exc: HttpError) -> ErrorCode:
+    """Traduce un `HttpError` de YouTube a un código de la lista registrada.
+
+    Es el punto que pide US-C3.6: de acá sale un `ErrorCode`, y la clase de
+    reintento la decide `app.domain.errors.classify` sin tabla nueva.
+    """
+    señales = http_failure_signals(exc)
+    return error_code_for_failure(señales.status, señales.reasons)
+
+
+def error_code_for_failure(status: int | None, reasons: Iterable[str]) -> ErrorCode:
+    """Tabla (status, reasons) -> ErrorCode. Ver el comentario de arriba."""
+    conjunto = set(reasons)
+
+    if conjunto & _QUOTA_REASONS or status == 429:
         return ErrorCode.QUOTA_EXCEEDED
-    if reason in _AUTH_REASONS or status in (401, 403):
+    if conjunto & _AUTH_REASONS or status == 401:
         return ErrorCode.OAUTH_ERROR
-    if status == 404:
+    if conjunto & _CONTENT_REASONS or status == 404:
         return ErrorCode.CONTENT_NOT_FOUND
-    if status == 400:
+    if conjunto & _METADATA_REASONS or status == 400:
         return ErrorCode.INVALID_METADATA
-    # 5xx, timeout del servidor y códigos inesperados: transitorio.
+    # 403 sin reason reconocible: permiso, no cuota (la cuota ya se filtró).
+    if status == 403:
+        return ErrorCode.OAUTH_ERROR
+    # 5xx, status ausente y todo lo que no supimos leer: transitorio.
     return ErrorCode.PUBLISH_FAILED
+
+
+def _agregar_reason(destino: list[str], valor: object) -> None:
+    if isinstance(valor, str):
+        limpio = valor.strip()
+        if limpio:
+            destino.append(limpio)
+
+
+def _http_status(exc: HttpError, cuerpo: dict[str, Any]) -> int | None:
+    """Status HTTP de la respuesta, o el `error.code` del cuerpo como respaldo.
+
+    Un `HttpError` siempre trae `resp` (la clase lo exige al construirse), pero
+    el `status` puede faltar. En ese caso el cuerpo suele traer el código.
+    """
+    status = getattr(getattr(exc, "resp", None), "status", None)
+    if status is None:
+        status = cuerpo.get("code")
+    try:
+        return int(status)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
 
 
 def _http_error_payload(exc: HttpError) -> dict[str, Any]:
     """Cuerpo JSON del error de Google, o {} si no se puede interpretar."""
     contenido = getattr(exc, "content", b"") or b""
-    try:
-        datos = json.loads(contenido.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
+    if isinstance(contenido, bytes | bytearray):
+        try:
+            contenido = contenido.decode("utf-8")
+        except UnicodeDecodeError:
+            return {}
+    if not isinstance(contenido, str):
         return {}
-    error = datos.get("error") if isinstance(datos, dict) else None
+    try:
+        datos = json.loads(contenido)
+    except ValueError:
+        return {}
+    if not isinstance(datos, dict):
+        return {}
+    error = datos.get("error")
     return error if isinstance(error, dict) else {}
-
-
-def _http_error_reason(exc: HttpError) -> str:
-    errores = _http_error_payload(exc).get("errors")
-    if isinstance(errores, list) and errores and isinstance(errores[0], dict):
-        return str(errores[0].get("reason", ""))
-    return str(_http_error_payload(exc).get("status", ""))
-
-
-def _http_error_message(exc: HttpError) -> str:
-    return str(_http_error_payload(exc).get("message", ""))
