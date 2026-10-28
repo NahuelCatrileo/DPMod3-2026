@@ -13,6 +13,14 @@ frontend lo guarda en memoria. El refresh token va solo en una cookie
 HttpOnly: el JavaScript de la página no lo puede leer, así que un XSS no se
 lo lleva. La cookie solo viaja a /api/auth, que es el mismo camino directo al
 módulo y a través del gateway.
+
+CSRF: refresh y logout se autentican con la cookie, que el navegador manda
+solo. Por eso exigen la cabecera X-CSRF-Protection: un formulario de otro
+sitio no puede ponerla, y un fetch desde otro origen la anuncia en un
+preflight que el gateway solo acepta para los orígenes de la UI. Si viene
+Origin, además tiene que estar en AUTH_ALLOWED_ORIGINS. Register y login no
+la necesitan: solo aceptan JSON, que un formulario de otro sitio no puede
+mandar.
 """
 
 from __future__ import annotations
@@ -21,7 +29,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Cookie, Depends, Response, status
+from fastapi import APIRouter, Cookie, Depends, Request, Response, status
 from pydantic import AliasChoices, BaseModel, Field, StringConstraints
 from sqlalchemy.orm import Session
 
@@ -29,7 +37,7 @@ from app.api.auth import require_user
 from app.api.routes_auth import TokenResponse
 from app.api.schemas import ErrorResponse
 from app.config import get_settings
-from app.domain.errors import UnauthorizedError
+from app.domain.errors import ForbiddenError, UnauthorizedError
 from app.infra.db import get_session
 from app.infra.models import User
 from app.services import user_auth
@@ -37,9 +45,16 @@ from app.services import user_auth
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 REFRESH_COOKIE = "pubtube_refresh"
+CSRF_HEADER = "X-CSRF-Protection"
 _COOKIE_PATH = "/api/auth"
 
 _401 = {401: {"model": ErrorResponse, "description": "UNAUTHORIZED"}}
+_403_CSRF = {
+    403: {
+        "model": ErrorResponse,
+        "description": f"UNAUTHORIZED: falta {CSRF_HEADER} o el origen no está permitido",
+    }
+}
 
 
 class RegisterRequest(BaseModel):
@@ -94,6 +109,15 @@ def _account(user: User) -> AccountResponse:
             createdAt=user.created_at,
         )
     )
+
+
+def _require_csrf(request: Request) -> None:
+    if not request.headers.get(CSRF_HEADER):
+        raise ForbiddenError(f"Falta la cabecera {CSRF_HEADER}.")
+    origin = request.headers.get("origin")
+    permitidos = get_settings().AUTH_ALLOWED_ORIGINS
+    if origin and permitidos and origin.rstrip("/") not in permitidos:
+        raise ForbiddenError("El origen de la petición no está permitido.")
 
 
 def _cookie_attrs() -> dict[str, Any]:
@@ -185,7 +209,8 @@ def me(
 @router.post(
     "/refresh",
     response_model=TokenResponse,
-    responses=_401,
+    responses={**_401, **_403_CSRF},
+    dependencies=[Depends(_require_csrf)],
     summary="Renovar el JWT con la cookie de sesión (issue #11)",
 )
 def refresh(
@@ -208,6 +233,8 @@ def refresh(
     "/logout",
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
+    responses=_403_CSRF,
+    dependencies=[Depends(_require_csrf)],
     summary="Cerrar la sesión (issue #11)",
 )
 def logout(

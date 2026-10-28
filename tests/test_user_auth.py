@@ -10,13 +10,14 @@ import pytest
 from argon2 import PasswordHasher
 from sqlalchemy import select
 
-from app.api.routes_users import REFRESH_COOKIE
+from app.api.routes_users import CSRF_HEADER, REFRESH_COOKIE
 from app.config import get_settings
 from app.infra.models import RefreshToken, User
 from app.services import user_auth
 from tests.conftest import make_token
 
 CUENTA = {"displayName": "Ana Pérez", "email": "Ana@Example.com", "password": "clave-segura-1"}
+CSRF = {CSRF_HEADER: "1"}
 
 
 @pytest.fixture(autouse=True)
@@ -48,10 +49,12 @@ def _cookie(r):
     return cookie[REFRESH_COOKIE]
 
 
-def _con_cookie(c, ruta, valor):
+def _con_cookie(c, ruta, valor, headers=CSRF):
     # Se vacía el jar del cliente para mandar exactamente esta cookie.
     c.cookies.clear()
-    headers = {"Cookie": f"{REFRESH_COOKIE}={valor}"} if valor else {}
+    headers = dict(headers)
+    if valor:
+        headers["Cookie"] = f"{REFRESH_COOKIE}={valor}"
     return c.post(ruta, headers=headers)
 
 
@@ -177,6 +180,18 @@ def test_el_rol_de_la_cuenta_va_en_el_jwt(anon_client, session):
     claims = _claims(_login(anon_client).json()["access_token"])
     assert claims["role"] == "admin"
     assert claims["kind"] == "user"
+
+
+def test_login_solo_acepta_json(anon_client):
+    # Un formulario de otro sitio no puede mandar application/json: así el
+    # login no se puede forzar con CSRF.
+    _registrar(anon_client)
+    r = anon_client.post(
+        "/api/auth/login",
+        content='{"email": "ana@example.com", "password": "clave-segura-1"}',
+        headers={"Content-Type": "text/plain"},
+    )
+    assert r.status_code == 422
 
 
 def test_recordar_sesion_hace_persistente_la_cookie(anon_client):
@@ -330,6 +345,49 @@ def test_refresh_de_cuenta_desactivada(anon_client, session):
     session.commit()
 
     _assert_unauthorized(_con_cookie(anon_client, "/api/auth/refresh", valor))
+
+
+# --- CSRF ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize("ruta", ["/api/auth/refresh", "/api/auth/logout"])
+def test_sin_cabecera_csrf_no_toca_la_sesion(anon_client, ruta):
+    _registrar(anon_client)
+    valor = _cookie(_login(anon_client)).value
+
+    r = _con_cookie(anon_client, ruta, valor, headers={})
+    _assert_forbidden(r)
+    assert "set-cookie" not in r.headers
+
+    # La sesión sigue viva: el pedido rechazado no la rotó ni la cerró.
+    assert _con_cookie(anon_client, "/api/auth/refresh", valor).status_code == 200
+
+
+def test_origen_no_permitido(anon_client, monkeypatch):
+    monkeypatch.setattr(get_settings(), "AUTH_ALLOWED_ORIGINS", ["https://pubtube.example"])
+    _registrar(anon_client)
+    valor = _cookie(_login(anon_client)).value
+
+    ajeno = {**CSRF, "Origin": "https://atacante.example"}
+    _assert_forbidden(_con_cookie(anon_client, "/api/auth/logout", valor, headers=ajeno))
+
+    propio = {**CSRF, "Origin": "https://pubtube.example"}
+    assert _con_cookie(anon_client, "/api/auth/refresh", valor, headers=propio).status_code == 200
+
+
+def test_sin_origin_basta_la_cabecera(anon_client, monkeypatch):
+    # Un cliente que no es navegador (curl, otro servicio) no manda Origin.
+    monkeypatch.setattr(get_settings(), "AUTH_ALLOWED_ORIGINS", ["https://pubtube.example"])
+    _registrar(anon_client)
+    valor = _cookie(_login(anon_client)).value
+    assert _con_cookie(anon_client, "/api/auth/refresh", valor).status_code == 200
+
+
+def test_origenes_permitidos_desde_el_entorno(monkeypatch):
+    from app.config import Settings
+
+    monkeypatch.setenv("AUTH_ALLOWED_ORIGINS", "https://a.example/, https://b.example")
+    assert Settings().AUTH_ALLOWED_ORIGINS == ["https://a.example", "https://b.example"]
 
 
 # --- Logout -------------------------------------------------------------

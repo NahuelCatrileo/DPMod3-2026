@@ -151,6 +151,18 @@ class Settings(BaseSettings):
     # gateway hace falta "none", que a su vez exige Secure.
     AUTH_COOKIE_SECURE: bool = True
     AUTH_COOKIE_SAMESITE: Literal["strict", "lax", "none"] = "strict"
+    # Orígenes (esquema://host[:puerto], separados por comas) desde los que el
+    # navegador puede llamar a refresh y logout. Si la petición trae Origin y
+    # no está aquí, se rechaza. Vacío = no se revisa Origin; sigue exigiéndose
+    # la cabecera X-CSRF-Protection.
+    AUTH_ALLOWED_ORIGINS: Annotated[list[str], NoDecode] = Field(default_factory=list)
+
+    @field_validator("AUTH_ALLOWED_ORIGINS", mode="before")
+    @classmethod
+    def _origenes_separados_por_coma(cls, value):
+        if isinstance(value, str):
+            return [o.strip().rstrip("/") for o in value.split(",") if o.strip()]
+        return value
 
     @field_validator("AUTH_CLIENTS", mode="before")
     @classmethod
