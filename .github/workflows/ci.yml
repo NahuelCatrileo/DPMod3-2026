@@ -127,15 +127,18 @@ jobs:
           m3="http://127.0.0.1:$MODULE_PORT"
           gw="http://127.0.0.1:8000"
           json=(-H "Content-Type: application/json")
+          csrf=(-H "X-CSRF-Protection: 1")
 
           # El gateway todavía no publica /api/auth/{register,login,refresh,logout}
           # (docs/gateway-auth-usuarios.md): la cuenta y la sesión van directo al
-          # módulo, y el JWT de usuario se usa a través del gateway.
-          for u in ana beto; do
-            curl --fail --silent --show-error --output /dev/null "${json[@]}" \
-              -d "{\"username\":\"$u\",\"email\":\"$u@ci.test\",\"password\":\"clave-de-ci-$u\"}" \
-              "$m3/api/auth/register"
-          done
+          # módulo, y el JWT de usuario se usa a través del gateway. beto se
+          # registra con username, el alias que manda el formulario de la UI.
+          curl --fail --silent --show-error --output /dev/null "${json[@]}" \
+            -d '{"displayName":"ana","email":"ana@ci.test","password":"clave-de-ci-ana"}' \
+            "$m3/api/auth/register"
+          curl --fail --silent --show-error --output /dev/null "${json[@]}" \
+            -d '{"username":"beto","email":"beto@ci.test","password":"clave-de-ci-beto"}' \
+            "$m3/api/auth/register"
           login() {
             curl --fail --silent --show-error -c "$RUNNER_TEMP/$1.jar" "${json[@]}" \
               -d "{\"email\":\"$1@ci.test\",\"password\":\"clave-de-ci-$1\"}" \
@@ -144,7 +147,7 @@ jobs:
           ana="$(login ana)"
           beto="$(login beto)"
           curl --fail --silent --show-error -H "Authorization: Bearer $ana" "$m3/api/auth/me" \
-            | jq -e '.data.username == "ana"'
+            | jq -e '.data.displayName == "ana" and .data.role == "user"'
 
           schedule_at="$(date -u -d '+1 hour' +%Y-%m-%dT%H:%M:%SZ)"
           publish_id="$(curl --fail --silent --show-error \
@@ -159,14 +162,18 @@ jobs:
           # Un usuario no ve la publicación de otro.
           test "$(status "$beto")" = 404
 
-          # El refresh rota la cookie. Tras el logout, la cookie anterior ya no sirve.
+          # El refresh rota la cookie. Tras el logout, la cookie anterior ya no
+          # sirve. Sin la cabecera CSRF, refresh responde 403 y no toca la sesión.
           jar="$RUNNER_TEMP/ana.jar"
-          curl --fail --silent --show-error -b "$jar" -c "$jar" -X POST "$m3/api/auth/refresh" \
-            | jq -e '.access_token | length > 0'
-          cp "$jar" "$jar.antes"
-          curl --fail --silent --show-error -b "$jar" -c "$jar" -X POST "$m3/api/auth/logout"
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
-            -b "$jar.antes" -X POST "$m3/api/auth/refresh")" = 401
+            -b "$jar" -X POST "$m3/api/auth/refresh")" = 403
+          curl --fail --silent --show-error -b "$jar" -c "$jar" "${csrf[@]}" \
+            -X POST "$m3/api/auth/refresh" | jq -e '.access_token | length > 0'
+          cp "$jar" "$jar.antes"
+          curl --fail --silent --show-error -b "$jar" -c "$jar" "${csrf[@]}" \
+            -X POST "$m3/api/auth/logout"
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            -b "$jar.antes" "${csrf[@]}" -X POST "$m3/api/auth/refresh")" = 401
 
       - name: Show logs on failure
         if: failure()
