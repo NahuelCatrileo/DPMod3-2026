@@ -158,6 +158,7 @@ def test_login_entrega_jwt_de_usuario_y_cookie_de_sesion(anon_client):
     claims = _claims(body["access_token"])
     assert claims["sub"] == user_id
     assert claims["role"] == "user"
+    assert claims["kind"] == "user"
     assert claims["jti"]
 
     cookie = _cookie(r)
@@ -175,6 +176,7 @@ def test_el_rol_de_la_cuenta_va_en_el_jwt(anon_client, session):
 
     claims = _claims(_login(anon_client).json()["access_token"])
     assert claims["role"] == "admin"
+    assert claims["kind"] == "user"
 
 
 def test_recordar_sesion_hace_persistente_la_cookie(anon_client):
@@ -248,7 +250,15 @@ def test_me_sin_token(anon_client):
 
 
 def test_me_con_token_de_servicio_es_403(anon_client):
-    token = make_token(role="service")
+    token = make_token(role="service", kind="service")
+    _assert_forbidden(
+        anon_client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+    )
+
+
+def test_un_servicio_no_pasa_por_usuario_aunque_diga_role_user(anon_client):
+    # kind manda: role no alcanza para hacerse pasar por persona.
+    token = make_token(sub=str(uuid.uuid4()), role="user", kind="service")
     _assert_forbidden(
         anon_client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
     )
@@ -256,13 +266,13 @@ def test_me_con_token_de_servicio_es_403(anon_client):
 
 @pytest.mark.parametrize("sub", ["no-es-uuid", str(uuid.uuid4())])
 def test_me_de_cuenta_inexistente(anon_client, sub):
-    token = make_token(sub=sub, role="user")
+    token = make_token(sub=sub, role="user", kind="user")
     r = anon_client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
     _assert_unauthorized(r)
 
 
 def test_token_de_usuario_no_conecta_youtube(anon_client):
-    token = make_token(role="user")
+    token = make_token(role="user", kind="user")
     r = anon_client.get("/oauth2/status", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 403
 

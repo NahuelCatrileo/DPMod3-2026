@@ -19,7 +19,7 @@ import logging
 import secrets
 
 from app.config import AuthClient, get_settings
-from app.services.tokens import sign_access_token
+from app.services.tokens import KIND_SERVICE, sign_access_token
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +73,6 @@ def authenticate_client(client_id: str, client_secret: str) -> AuthClient | None
 
 def issue_access_token(client_id: str, cliente: AuthClient) -> tuple[str, int]:
     """Devuelve (token, segundos de vigencia)."""
-    token, vigencia, jti = sign_access_token(client_id, cliente.role)
+    token, vigencia, jti = sign_access_token(client_id, cliente.role, KIND_SERVICE)
     logger.info("jwt_emitido client_id=%s jti=%s", client_id, jti)
     return token, vigencia

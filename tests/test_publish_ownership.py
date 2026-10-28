@@ -17,17 +17,17 @@ def _auth(token):
 
 @pytest.fixture
 def ana():
-    return _auth(make_token(sub="user-ana", role="user"))
+    return _auth(make_token(sub="user-ana", role="user", kind="user"))
 
 
 @pytest.fixture
 def beto():
-    return _auth(make_token(sub="user-beto", role="user"))
+    return _auth(make_token(sub="user-beto", role="user", kind="user"))
 
 
 @pytest.fixture
 def servicio():
-    return _auth(make_token(sub="module-1", role="service"))
+    return _auth(make_token(sub="module-1", role="service", kind="service"))
 
 
 def _programar(c, headers, content_id="c-100"):
@@ -85,6 +85,28 @@ def test_el_conflicto_no_revela_la_publicacion_de_otro(anon_client, ana, beto):
     assert ajeno.status_code == propio.status_code == 409
     assert publish_id not in ajeno.json()["message"]
     assert publish_id in propio.json()["message"]
+
+
+def test_kind_user_limita_aunque_role_no_sea_user(anon_client, ana):
+    # kind manda sobre role: un token de usuario no se vuelve servicio por
+    # traer otro rol.
+    publish_id = _programar(anon_client, ana).json()["publishId"]
+    otro = _auth(make_token(sub="user-otro", role="service", kind="user"))
+    assert _estado(anon_client, otro, publish_id).status_code == 404
+
+
+def test_un_usuario_admin_ve_todas(anon_client, ana):
+    publish_id = _programar(anon_client, ana).json()["publishId"]
+    admin = _auth(make_token(sub="user-admin", role="admin", kind="user"))
+    assert _estado(anon_client, admin, publish_id).status_code == 200
+
+
+def test_token_de_usuario_sin_kind_sigue_limitado(anon_client, ana):
+    # Tokens emitidos antes del claim kind (role user, sin kind): siguen
+    # viendo solo lo suyo mientras no vencen.
+    publish_id = _programar(anon_client, ana).json()["publishId"]
+    antiguo = _auth(make_token(sub="user-beto", role="user"))
+    assert _estado(anon_client, antiguo, publish_id).status_code == 404
 
 
 @pytest.fixture

@@ -28,7 +28,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.config import get_settings
 from app.domain.errors import ForbiddenError, UnauthorizedError
-from app.services.tokens import USER_ROLE
+from app.services.tokens import KIND_SERVICE, KIND_USER, USER_ROLE
 
 logger = logging.getLogger(__name__)
 
@@ -91,13 +91,26 @@ def require_admin(claims: dict[str, Any] = Depends(require_jwt)) -> dict[str, An
     return claims
 
 
+def token_kind(claims: dict[str, Any]) -> str:
+    """`user` o `service`, según el claim `kind` (ADR-0009).
+
+    Los tokens sin `kind` son de antes de ese claim: los de usuario se
+    reconocen por `role: user`, y el resto se trata como servicio, igual que
+    hasta ahora.
+    """
+    kind = claims.get("kind")
+    if kind in (KIND_USER, KIND_SERVICE):
+        return kind
+    return KIND_USER if claims.get("role") == USER_ROLE else KIND_SERVICE
+
+
 def require_user(claims: dict[str, Any] = Depends(require_jwt)) -> dict[str, Any]:
     """Dependencia de FastAPI: JWT válido de un usuario (ADR-0009).
 
     Un token de servicio no representa a una persona, así que no tiene
     cuenta que mostrar en /api/auth/me.
     """
-    if claims.get("role") != USER_ROLE:
+    if token_kind(claims) != KIND_USER:
         raise ForbiddenError(
             "Esta operación requiere el token de un usuario (POST /api/auth/login)."
         )
@@ -107,7 +120,10 @@ def require_user(claims: dict[str, Any] = Depends(require_jwt)) -> dict[str, Any
 def owner_scope(claims: dict[str, Any]) -> str | None:
     """Dueño al que se limita la consulta, o None si el token ve todo (ADR-0009).
 
-    Con un token de usuario es su `sub`: solo ve lo que programó él. Los
-    servicios y el admin siguen viendo todas las publicaciones, como antes.
+    Con un token de usuario es su `sub`: solo ve lo que programó él, salvo que
+    su cuenta tenga `role: admin`. Los servicios siguen viendo todas las
+    publicaciones, como antes.
     """
-    return claims["sub"] if claims.get("role") == USER_ROLE else None
+    if token_kind(claims) == KIND_USER and claims.get("role") != ADMIN_ROLE:
+        return claims["sub"]
+    return None

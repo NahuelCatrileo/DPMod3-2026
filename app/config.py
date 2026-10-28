@@ -23,6 +23,15 @@ class AuthClient(BaseModel):
     # Va en el claim `role` del token.
     role: str = "service"
 
+    @field_validator("role")
+    @classmethod
+    def _no_es_rol_de_usuario(cls, value: str) -> str:
+        # "user" es el rol de las cuentas de personas (ADR-0009): un sistema
+        # con ese rol se confundiría con un usuario.
+        if value == "user":
+            raise ValueError("un cliente de servicio no puede tener role 'user'")
+        return value
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(

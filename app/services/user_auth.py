@@ -3,8 +3,8 @@
 Complementa a client_credentials.py: aquella entrega tokens a sistemas y
 esta a personas. Las dos firman con `sign_access_token`, así que el gateway y
 app/api/auth.py validan un token de usuario igual que uno de servicio. Lo que
-cambia es `role`, que sale de la cuenta (`user` por defecto) y limita al
-usuario a sus propias publicaciones.
+cambia es `kind: user`, que limita al usuario a sus propias publicaciones, y
+`role`, que sale de la cuenta.
 
 - Contraseñas: Argon2id con el perfil de baja memoria de RFC 9106
   (64 MiB, 3 pasadas, 4 hilos), de argon2-cffi.
@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.domain.errors import DuplicateUserError, UnauthorizedError
 from app.infra.models import RefreshToken, User
-from app.services.tokens import sign_access_token
+from app.services.tokens import KIND_USER, sign_access_token
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +113,7 @@ def authenticate_user(session: Session, email: str, password: str) -> User | Non
 
 def issue_user_access_token(user: User) -> tuple[str, int]:
     """Devuelve (token, segundos de vigencia)."""
-    token, vigencia, jti = sign_access_token(str(user.id), user.role)
+    token, vigencia, jti = sign_access_token(str(user.id), user.role, KIND_USER)
     logger.info("jwt_emitido user_id=%s jti=%s", user.id, jti)
     return token, vigencia
 
