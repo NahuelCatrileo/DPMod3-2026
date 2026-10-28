@@ -95,6 +95,19 @@ class Settings(BaseSettings):
     # autorizar la cuenta.
     OAUTH_TOKEN_ENCRYPTION_KEY: str | None = None
 
+    # --- US-C3.4: metadatos del Módulo 1 ----------------------------------
+    # URL interna del M1 para GET /api/content/{contentId}/metadata.
+    # Se usa la red interna de los módulos, no el Gateway: así M3 no necesita
+    # un JWT de servicio para una lectura interna.
+    MODULE1_BASE_URL: str = "http://module1-api:8000"
+    MODULE1_TIMEOUT_SECONDS: float = Field(default=5.0, gt=0)
+
+    # --- US-C3.5: subida real a YouTube ------------------------------------
+    # Carpeta con los videos a subir, nombrados <contentId>.<ext>. Sigue siendo
+    # provisional: el endpoint de metadatos del M1 (US-C3.4) ya se consume,
+    # pero M1 todavía no entrega los bytes ni una URL de descarga del video.
+    YOUTUBE_VIDEO_DIR: str = "videos"
+
     # --- Autenticación de la API con JWT (ADR-0005) ------------------------
     # Los tokens los emite este módulo (ADR-0007) y los verifican el API
     # Gateway (Equipo D, US-D1) y este módulo, con la misma clave compartida

@@ -147,6 +147,46 @@ revocación.
 Se retiran `SessionMiddleware`, `SESSION_SECRET_KEY` e `itsdangerous`: el
 flujo ya no usa la cookie de sesión.
 
+**Mapeo de errores de la YouTube Data API (US-C3.6)**
+
+Refrescar resuelve "el token venció", pero no los rechazos de `videos.insert`:
+ahí la API responde un status HTTP y un `reason` propio. `app/infra/publishers/
+youtube.py::map_http_error()` traduce esa respuesta a un `ErrorCode` de la lista
+registrada y de ahí, sin tabla nueva, sale la clase de reintento de ADR-0006:
+
+| Respuesta de YouTube | Código | Clase | Se reintenta |
+|---|---|---|---|
+| `403 quotaExceeded`, `dailyLimitExceeded`, `rateLimitExceeded`, `userRateLimitExceeded`, `uploadLimitExceeded`; HTTP 429 | `QUOTA_EXCEEDED` | diferible | Sí, con espera larga |
+| HTTP 401; `authError`, `unauthorized`, `invalid_grant`, `insufficientPermissions`, `forbidden`, `PERMISSION_DENIED`; 403 sin `reason` reconocible | `OAUTH_ERROR` | definitivo | No: hay que reconectar |
+| HTTP 404; `videoNotFound` | `CONTENT_NOT_FOUND` | definitivo | No |
+| HTTP 400; `invalidMetadata`, `invalidTitle`, `invalidVideoMetadata`, … | `INVALID_METADATA` | definitivo | No |
+| 5xx, status ausente, cuerpo ilegible o cualquier otra respuesta | `PUBLISH_FAILED` | transitorio | Sí, con backoff |
+
+Dos reglas sostienen la tabla:
+
+1. **El `reason` manda sobre el status.** Google usa 403 tanto para cuota
+   agotada como para permisos, y 400 para varios rechazos de metadatos: solo el
+   `reason` los distingue. Se miran todas las entradas de `errors[]` y
+   `details[]`, y también `error.status` (`PERMISSION_DENIED`, etc.), porque
+   Google no siempre usa el mismo campo.
+2. **Lo que no se entiende es transitorio.** Una respuesta ilegible, un 5xx o
+   un status desconocido se reintentan. Es preferible gastar un intento a dar
+   por perdida una publicación por una respuesta que no supimos leer.
+
+RELACIÓN CON `OAUTH_ERROR`: hay dos familias de `OAUTH_ERROR` y las dos son
+definitivas, pero se arreglan distinto. La del **refresh** (tabla de arriba,
+US-C3.3) se detecta antes de llamar a la API y suele resolverse reconectando la
+cuenta; la del **mapeo HTTP** (US-C3.6) llega como rechazo de la API y puede ser
+un permiso que falta en el proyecto de Google Cloud o un token revocado a medio
+camino. En los dos casos la política es la misma: no se reintenta, se marca
+`failed` y se emite `publish.failed`. El detalle del `reason` queda en el log y
+en `lastError`, que es lo que permite distinguirlas al diagnosticar.
+
+> Nota de trazabilidad: el desglose de US-C3.6 dice "actualizar el ADR-0005
+> sobre `OAUTH_ERROR`". ADR-0005 es el de JWT de la API; el OAuth de Google y
+> `OAUTH_ERROR` se documentan acá. Se deja el mapeo en este ADR y un puntero en
+> ADR-0005 para que nadie busque la tabla en el lugar equivocado.
+
 ## Consecuencias
 
 - **Refresh tokens de 7 días en modo Testing.** Mientras la pantalla de

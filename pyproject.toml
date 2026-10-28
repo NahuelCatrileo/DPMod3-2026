@@ -2,6 +2,11 @@
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-q"
+markers = [
+    # US-C3.7: prueba contra el canal real de YouTube. Se salta sola salvo que
+    # se exporte YOUTUBE_REAL_CHANNEL_TEST=1 (ver docs/oauth-youtube.md).
+    "manual: prueba manual contra un servicio real; no corre en CI",
+]
 
 [tool.ruff]
 line-length = 100
@@ -17,6 +22,6 @@ ignore = [
 
 [tool.coverage.run]
 source = ["app"]
-# El cliente de la YouTube Data API y el publicador real son el resto de US-C3
-# (videos.insert); el flujo OAuth de app/oauth/ ya se mide.
-omit = ["app/oauth/youtube_client.py", "app/infra/publishers/youtube.py"]
+# El cliente de la YouTube Data API es una envoltura fina de googleapiclient;
+# el flujo OAuth y el publicador real ya se miden con sus pruebas.
+omit = ["app/oauth/youtube_client.py"]

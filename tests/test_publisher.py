@@ -74,12 +74,6 @@ def test_flag_invalido_falla_temprano():
         build_publisher("cualquier-cosa")
 
 
-def test_youtube_publisher_aun_no_implementado():
-    resultado = YouTubePublisher().publish_video("c-001")
-    assert resultado.success is False
-    assert resultado.error_code is ErrorCode.PUBLISH_FAILED
-
-
 def test_publish_result_helpers():
     assert PublishResult.ok("abc").success is True
     assert PublishResult.failure(ErrorCode.OAUTH_ERROR, "x").success is False

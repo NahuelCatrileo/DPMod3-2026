@@ -117,6 +117,42 @@ curl -X POST -H "Authorization: Bearer $TOKEN" http://localhost:8000/oauth2/revo
 Revoca el acceso en Google y borra los tokens. Si Google no confirma la
 revocación, responde 502 y conserva los tokens para que se pueda reintentar.
 
+## 6. Prueba manual contra el canal real (US-C3.7)
+
+El resto de las pruebas de publicación usa `MockPublisher` o `HttpMockSequence`
+de `googleapiclient`: no tocan la red ni gastan cuota. La única que sube un
+video de verdad es esta, y **no corre en CI** (se salta sola).
+
+Requisitos: los pasos 1–3 hechos, un archivo de video en `videos/` y el módulo
+con acceso al `.env`.
+
+```bash
+# Un video propio, no de terceros. Corto: son unos segundos de subida.
+cp /ruta/a/mi-video.mp4 videos/real-test.mp4
+
+YOUTUBE_REAL_CHANNEL_TEST=1 pytest tests/test_youtube_api.py \
+  -k publicacion_real_contra_un_canal -v -s
+```
+
+Qué comprueba: que `videos.insert` real devuelve un `id` de YouTube y que el
+publicador lo entrega en `PublishResult.youtube_video_id`. Es la única prueba
+que valida de punta a punta lo que el mock solo puede simular: permisos del
+proyecto, cuenta elegida en el consentimiento y formato del archivo.
+
+Tres cosas que conviene saber antes de ejecutarla:
+
+- **Deja un video en el canal.** Sale en privado (ver «Antes de cada demo»),
+  pero queda. El test imprime el id y el enlace al Studio para borrarlo; no hay
+  forma de subir sin dejar rastro.
+- **Gasta cuota.** Cada ejecución consume unidades de la cuota diaria de la
+  YouTube Data API. No la corran en bucle.
+- **Si falla con `OAUTH_ERROR`**, casi siempre es el refresh token vencido (7
+  días en modo Testing) o una cuenta que no es usuario de prueba: reconecten
+  con el paso 3.
+
+Para verificar solo la traducción de errores de la API, sin red ni cuota, está
+el resto del archivo: `pytest tests/test_youtube_api.py -v`.
+
 ## Antes de cada demo
 
 - **Reconecten la cuenta.** Con la app en modo Prueba, Google vence los

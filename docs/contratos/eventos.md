@@ -47,7 +47,11 @@ Ejemplos:
 { "contentId": "c-002", "errorCode": "QUOTA_EXCEEDED", "attempt": 3, "reason": "..." }
 ```
 
-`errorCode` solo toma valores de la lista registrada (Doc 1 §6.3).
+`errorCode` solo toma valores de la lista registrada (Doc 1 §6.3). El mapeo de
+las respuestas de la YouTube Data API a esos códigos (HTTP + `reason` →
+`ErrorCode`) está en `ADR/0008-oauth-youtube-consentimiento-tokens.md`
+→ «Mapeo de errores de la YouTube Data API» (US-C3.6), y su prueba de contrato
+en `tests/test_youtube_api.py`.
 
 ### Reintentos (US-C5)
 
@@ -74,7 +78,14 @@ El mapeo completo clase ↔ códigos está en `ADR/0006-clasificacion-errores-re
 
 | Routing key | Emisor | Estado |
 |---|---|---|
-| `metadata.updated` | M1 (Equipo A) | **Pendiente.** El payload declarado es `contentId, version, title, tags, visibility`. No está definido qué hacemos al recibirlo. A acordar con Equipo A. |
+| `metadata.updated` | M1 (Equipo A) | **Pendiente como consumidor.** El payload declarado es `contentId, version, title, tags, visibility`. No incluye `description`, que YouTube sí necesita. A acordar con Equipo A. |
+
+> **US-C3.4 — metadatos por REST.** Mientras el consumidor de
+> `metadata.updated` no esté implementado, y para no bloquear la publicación
+> por el campo `description`, M3 consulta `GET /api/content/{contentId}/metadata`
+> en el M1 al momento de publicar. El detalle del contrato, los campos que se
+> usan y el pendiente del archivo del video están en
+> `docs/contratos/rest.md` → «Integración saliente con Módulo 1».
 
 > El Doc 1 §2.2 dice que M3 "consume `publish.scheduled`". Es un error del
 > documento: el catálogo §6.1 y el Doc 3 §2 son claros en que M3 **publica**
