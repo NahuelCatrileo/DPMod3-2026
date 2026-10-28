@@ -14,11 +14,11 @@ cada PR que toque una firma.
 | `GET /api/publish/{id}/status` | — | `200 { publishId, state, scheduleAt, timezone, attempts, youtubeVideoId?, lastError?, correlationId }` | US-C6 |
 | `GET /api/health` | — | `200 { status, data }` | — |
 | `POST /api/auth/token` | formulario `grant_type=client_credentials`, `client_id`, `client_secret` (o HTTP Basic) | `200 { access_token, token_type, expires_in }` | ADR-0007 |
-| `POST /api/auth/register` | `{ username, email, password }` | `201 { status, data: cuenta }` | ADR-0009 |
+| `POST /api/auth/register` | `{ displayName, email, password }` (alias de `displayName`: `display_name`, `username`) | `201 { status, data: cuenta }` | ADR-0009 |
 | `POST /api/auth/login` | `{ email, password, remember? }` | `200 { access_token, token_type, expires_in }` + cookie `pubtube_refresh` | ADR-0009 |
-| `GET /api/auth/me` | — (JWT con `role: user`) | `200 { status, data: cuenta }` | ADR-0009 |
-| `POST /api/auth/refresh` | cookie `pubtube_refresh` | `200 { access_token, token_type, expires_in }` + cookie rotada | ADR-0009 |
-| `POST /api/auth/logout` | cookie `pubtube_refresh` | `204` + cookie borrada | ADR-0009 |
+| `GET /api/auth/me` | — (JWT con `kind: user`) | `200 { status, data: cuenta }` | ADR-0009 |
+| `POST /api/auth/refresh` | cookie `pubtube_refresh` + cabecera `X-CSRF-Protection` | `200 { access_token, token_type, expires_in }` + cookie rotada | ADR-0009 |
+| `POST /api/auth/logout` | cookie `pubtube_refresh` + cabecera `X-CSRF-Protection` | `204` + cookie borrada | ADR-0009 |
 | `POST /api/publish/{id}/now` | — | **No implementado** (US-C7, Could, Sprint 4) | US-C7 |
 | `POST /oauth2/authorize` | — (JWT con `role: admin`) | `200 { status, data: { authorizationUrl, expiresIn } }` | US-C3.3 |
 | `GET /oauth2/callback` | query `state`, `code` o `error` (los pone Google) | `200 { status, data: conexión }` | US-C3.3 |
@@ -33,26 +33,48 @@ públicos.
 
 ### Cuentas de usuario (ADR-0009)
 
-La "cuenta" es `{ id, username, email, role, createdAt }`. Nunca incluye la
-contraseña ni su hash. `username` (3 a 32 caracteres `[A-Za-z0-9_.-]`) y
-`email` se guardan en minúsculas y son únicos. `password` va de 8 a 128
-caracteres. Los campos extra del registro se ignoran: el rol siempre es
-`user`.
+La "cuenta" es `{ id, email, displayName, role, createdAt }`, con las
+columnas de la sección 2 del issue #11 (`app_user`: `id` UUID,
+`email_normalized`, `display_name`, `password_hash`, `role`, `is_active`).
+Nunca incluye la contraseña ni su hash.
+
+- `email`: hasta 255 caracteres. Se guarda sin espacios y en minúsculas, y es
+  único.
+- `displayName`: de 1 a 80 caracteres, sin espacios en los extremos. No es
+  único. El registro también lo acepta como `display_name` o `username`, que
+  es el campo del formulario de la UI.
+- `password`: de 8 a 128 caracteres.
+- `role`: lo fija la cuenta y no se elige al registrarse; los campos extra se
+  ignoran. Es `user` salvo que se cambie en la base, por ejemplo a `admin`.
 
 El login y el refresh responden con la misma forma que `POST /api/auth/token`
-y `Cache-Control: no-store`. El JWT lleva `sub` (id del usuario),
-`role: user`, `iat`, `exp`, `jti` e `iss` si se configura. El refresh token
-viaja solo en la cookie
+y `Cache-Control: no-store`. El JWT lleva `sub` (el UUID de la cuenta),
+`role` (el de la cuenta), `kind: user`, `iat`, `exp`, `jti` e `iss` si se
+configura. Los tokens de `POST /api/auth/token` llevan `kind: service`, y
+ningún cliente de `AUTH_CLIENTS` puede tener `role: user`.
+
+El refresh token viaja solo en la cookie
 `pubtube_refresh; HttpOnly; Secure; SameSite=Strict; Path=/api/auth`, con
 `Max-Age` solo si `remember` es `true`. Cada refresh lo rota, y presentar uno
 ya rotado revoca toda la sesión. Un 401 de `refresh` también borra la cookie.
 
+**CSRF.** `refresh` y `logout` exigen la cabecera `X-CSRF-Protection` con
+cualquier valor (la UI manda `1`). Un formulario de otro sitio no puede
+ponerla. Si la petición trae `Origin`, además tiene que estar en
+`AUTH_ALLOWED_ORIGINS`. Si falta la cabecera o el origen no está permitido,
+la respuesta es `403 UNAUTHORIZED` y la sesión no cambia. `register` y
+`login` solo aceptan `application/json`.
+
 **Qué ve cada token en `/api/publish/*`:**
 
-| `role` del JWT | `POST /schedule` | `GET /{id}/status` |
+| JWT | `POST /schedule` | `GET /{id}/status` |
 |---|---|---|
-| `user` | Queda como dueño (`sub`) | Solo las suyas. La de otro: `404 CONTENT_NOT_FOUND` |
-| cualquier otro (`service`, `admin`, sin rol) | Queda como dueño (`sub`) | Todas, como antes |
+| `kind: user` | Queda como dueño (`sub`) | Solo las suyas. La de otro: `404 CONTENT_NOT_FOUND` |
+| `kind: user` con `role: admin` | Queda como dueño (`sub`) | Todas |
+| `kind: service` | Queda como dueño (`sub`) | Todas, como antes |
+
+Un token sin `kind`, emitido antes de ese claim, es de usuario si trae
+`role: user` y de servicio en cualquier otro caso.
 
 Las rutas de cuentas a través del gateway están en
 [`../gateway-auth-usuarios.md`](../gateway-auth-usuarios.md).
@@ -213,11 +235,12 @@ para errores transitorios y `PUBLISH_QUOTA_RETRY_SECONDS` (3600 s) para
 | Falta el JWT, está vencido, mal firmado o sin `sub`/`exp` | 401 | `UNAUTHORIZED` |
 | `POST /api/auth/token`: cliente inexistente, secreto incorrecto o sin credenciales | 401 | `UNAUTHORIZED` |
 | `POST /api/auth/token`: `grant_type` distinto de `client_credentials` o faltante | 422 | `INVALID_METADATA` |
-| `register`: correo o nombre de usuario ya registrado | 409 | `DUPLICATE_CONTENT` |
-| `register` / `login`: campo faltante o mal formado | 422 | `INVALID_METADATA` |
+| `register`: correo ya registrado (sin importar mayúsculas ni espacios) | 409 | `DUPLICATE_CONTENT` |
+| `register` / `login`: campo faltante o mal formado, o cuerpo que no es JSON | 422 | `INVALID_METADATA` |
+| `refresh` / `logout`: sin `X-CSRF-Protection`, o `Origin` fuera de `AUTH_ALLOWED_ORIGINS` | 403 | `UNAUTHORIZED` |
 | `login`: correo desconocido, contraseña incorrecta o cuenta desactivada | 401 | `UNAUTHORIZED` |
 | `refresh`: sin cookie, o cookie desconocida, vencida, revocada o reutilizada | 401 | `UNAUTHORIZED` |
-| `GET /api/auth/me` con un JWT válido sin `role: user` | 403 | `UNAUTHORIZED` |
+| `GET /api/auth/me` con un JWT válido que no es de usuario (`kind: service`) | 403 | `UNAUTHORIZED` |
 | `GET /api/auth/me` de una cuenta borrada o desactivada | 401 | `UNAUTHORIZED` |
 | `GET /api/publish/{id}/status` de otro usuario (token `role: user`) | 404 | `CONTENT_NOT_FOUND` |
 | `/oauth2/*` con un JWT válido pero sin `role: admin` | 403 | `UNAUTHORIZED` |

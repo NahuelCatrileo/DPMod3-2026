@@ -1,6 +1,7 @@
 """Issue #11 · Registro, login y sesiones de usuarios (ADR-0009)."""
 
 import hashlib
+import uuid
 from datetime import datetime, timedelta, timezone
 from http.cookies import SimpleCookie
 
@@ -9,13 +10,14 @@ import pytest
 from argon2 import PasswordHasher
 from sqlalchemy import select
 
-from app.api.routes_users import REFRESH_COOKIE
+from app.api.routes_users import CSRF_HEADER, REFRESH_COOKIE
 from app.config import get_settings
 from app.infra.models import RefreshToken, User
 from app.services import user_auth
 from tests.conftest import make_token
 
-CUENTA = {"username": "Ana_Canal", "email": "Ana@Example.com", "password": "clave-segura-1"}
+CUENTA = {"displayName": "Ana Pérez", "email": "Ana@Example.com", "password": "clave-segura-1"}
+CSRF = {CSRF_HEADER: "1"}
 
 
 @pytest.fixture(autouse=True)
@@ -47,10 +49,12 @@ def _cookie(r):
     return cookie[REFRESH_COOKIE]
 
 
-def _con_cookie(c, ruta, valor):
+def _con_cookie(c, ruta, valor, headers=CSRF):
     # Se vacía el jar del cliente para mandar exactamente esta cookie.
     c.cookies.clear()
-    headers = {"Cookie": f"{REFRESH_COOKIE}={valor}"} if valor else {}
+    headers = dict(headers)
+    if valor:
+        headers["Cookie"] = f"{REFRESH_COOKIE}={valor}"
     return c.post(ruta, headers=headers)
 
 
@@ -64,41 +68,57 @@ def _assert_unauthorized(r):
     assert r.json()["code"] == "UNAUTHORIZED"
 
 
+def _assert_forbidden(r):
+    assert r.status_code == 403
+    assert r.json()["code"] == "UNAUTHORIZED"
+
+
 # --- Registro -----------------------------------------------------------
 
 
-def test_registro_crea_la_cuenta_normalizada(anon_client, session):
+def test_registro_guarda_las_columnas_del_issue(anon_client, session):
     r = _registrar(anon_client)
 
     assert r.status_code == 201
     data = r.json()["data"]
-    assert data["username"] == "ana_canal"
+    assert data["displayName"] == "Ana Pérez"
     assert data["email"] == "ana@example.com"
     assert data["role"] == "user"
     assert "password" not in str(r.json())
 
-    user = session.get(User, data["id"])
+    user = session.get(User, uuid.UUID(data["id"]))
+    assert user.email_normalized == "ana@example.com"
+    assert user.display_name == "Ana Pérez"
+    assert user.role == "user"
+    assert user.is_active is True
     assert user.password_hash.startswith("$argon2id$")
     assert "clave-segura-1" not in user.password_hash
+
+
+@pytest.mark.parametrize("campo", ["displayName", "display_name", "username"])
+def test_registro_acepta_los_alias_del_nombre(anon_client, campo):
+    cuerpo = {"email": "ana@example.com", "password": "clave-segura-1", campo: "  ana_canal "}
+    r = anon_client.post("/api/auth/register", json=cuerpo)
+    assert r.status_code == 201
+    assert r.json()["data"]["displayName"] == "ana_canal"
+
+
+def test_dos_cuentas_pueden_compartir_nombre(anon_client):
+    assert _registrar(anon_client).status_code == 201
+    assert _registrar(anon_client, email="otra@example.com").status_code == 201
 
 
 def test_registro_ignora_el_rol_que_manda_el_cliente(anon_client):
     r = _registrar(anon_client, role="admin")
     assert r.status_code == 201
+    assert r.json()["data"]["role"] == "user"
     token = _login(anon_client).json()["access_token"]
     assert _claims(token)["role"] == "user"
 
 
-@pytest.mark.parametrize(
-    "cambio",
-    [
-        {"email": "ANA@example.com", "username": "otra"},
-        {"email": "otra@example.com", "username": "ANA_CANAL"},
-    ],
-)
-def test_registro_duplicado_devuelve_409(anon_client, cambio):
+def test_correo_duplicado_devuelve_409(anon_client):
     assert _registrar(anon_client).status_code == 201
-    r = _registrar(anon_client, **cambio)
+    r = _registrar(anon_client, email="  ANA@example.COM")
     assert r.status_code == 409
     assert r.json()["code"] == "DUPLICATE_CONTENT"
 
@@ -109,14 +129,21 @@ def test_registro_duplicado_devuelve_409(anon_client, cambio):
         {"password": "corta"},
         {"password": "x" * 129},
         {"email": "sin-arroba"},
-        {"username": "a b"},
-        {"username": "ab"},
+        {"displayName": "   "},
+        {"displayName": "x" * 81},
     ],
 )
 def test_registro_invalido_devuelve_422(anon_client, cambio):
     r = _registrar(anon_client, **cambio)
     assert r.status_code == 422
     assert r.json()["code"] == "INVALID_METADATA"
+
+
+def test_registro_sin_nombre_devuelve_422(anon_client):
+    r = anon_client.post(
+        "/api/auth/register", json={"email": "ana@example.com", "password": "clave-segura-1"}
+    )
+    assert r.status_code == 422
 
 
 # --- Login --------------------------------------------------------------
@@ -134,6 +161,7 @@ def test_login_entrega_jwt_de_usuario_y_cookie_de_sesion(anon_client):
     claims = _claims(body["access_token"])
     assert claims["sub"] == user_id
     assert claims["role"] == "user"
+    assert claims["kind"] == "user"
     assert claims["jti"]
 
     cookie = _cookie(r)
@@ -142,6 +170,28 @@ def test_login_entrega_jwt_de_usuario_y_cookie_de_sesion(anon_client):
     assert cookie["samesite"].lower() == "strict"
     # Sin "Recordar sesión" la cookie muere al cerrar el navegador.
     assert cookie["max-age"] == ""
+
+
+def test_el_rol_de_la_cuenta_va_en_el_jwt(anon_client, session):
+    user_id = _registrar(anon_client).json()["data"]["id"]
+    session.get(User, uuid.UUID(user_id)).role = "admin"
+    session.commit()
+
+    claims = _claims(_login(anon_client).json()["access_token"])
+    assert claims["role"] == "admin"
+    assert claims["kind"] == "user"
+
+
+def test_login_solo_acepta_json(anon_client):
+    # Un formulario de otro sitio no puede mandar application/json: así el
+    # login no se puede forzar con CSRF.
+    _registrar(anon_client)
+    r = anon_client.post(
+        "/api/auth/login",
+        content='{"email": "ana@example.com", "password": "clave-segura-1"}',
+        headers={"Content-Type": "text/plain"},
+    )
+    assert r.status_code == 422
 
 
 def test_recordar_sesion_hace_persistente_la_cookie(anon_client):
@@ -179,13 +229,13 @@ def test_login_fallido_no_dice_que_fallo(anon_client, email, password):
 
 def test_cuenta_desactivada_no_inicia_sesion(anon_client, session):
     user_id = _registrar(anon_client).json()["data"]["id"]
-    session.get(User, user_id).is_active = False
+    session.get(User, uuid.UUID(user_id)).is_active = False
     session.commit()
     _assert_unauthorized(_login(anon_client))
 
 
 def test_login_actualiza_el_hash_si_cambian_los_parametros(anon_client, session, monkeypatch):
-    user_id = _registrar(anon_client).json()["data"]["id"]
+    user_id = uuid.UUID(_registrar(anon_client).json()["data"]["id"])
     antes = session.get(User, user_id).password_hash
 
     monkeypatch.setattr(
@@ -207,7 +257,7 @@ def test_me_devuelve_la_cuenta_del_token(anon_client):
     token = _login(anon_client).json()["access_token"]
     r = anon_client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 200
-    assert r.json()["data"]["username"] == "ana_canal"
+    assert r.json()["data"]["displayName"] == "Ana Pérez"
 
 
 def test_me_sin_token(anon_client):
@@ -215,20 +265,29 @@ def test_me_sin_token(anon_client):
 
 
 def test_me_con_token_de_servicio_es_403(anon_client):
-    token = make_token(role="service")
-    r = anon_client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
-    assert r.status_code == 403
-    assert r.json()["code"] == "UNAUTHORIZED"
+    token = make_token(role="service", kind="service")
+    _assert_forbidden(
+        anon_client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+    )
 
 
-def test_me_de_cuenta_inexistente(anon_client):
-    token = make_token(sub="no-existe", role="user")
+def test_un_servicio_no_pasa_por_usuario_aunque_diga_role_user(anon_client):
+    # kind manda: role no alcanza para hacerse pasar por persona.
+    token = make_token(sub=str(uuid.uuid4()), role="user", kind="service")
+    _assert_forbidden(
+        anon_client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+    )
+
+
+@pytest.mark.parametrize("sub", ["no-es-uuid", str(uuid.uuid4())])
+def test_me_de_cuenta_inexistente(anon_client, sub):
+    token = make_token(sub=sub, role="user", kind="user")
     r = anon_client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
     _assert_unauthorized(r)
 
 
 def test_token_de_usuario_no_conecta_youtube(anon_client):
-    token = make_token(role="user")
+    token = make_token(role="user", kind="user")
     r = anon_client.get("/oauth2/status", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 403
 
@@ -282,10 +341,53 @@ def test_refresh_vencido(anon_client, session):
 def test_refresh_de_cuenta_desactivada(anon_client, session):
     user_id = _registrar(anon_client).json()["data"]["id"]
     valor = _cookie(_login(anon_client)).value
-    session.get(User, user_id).is_active = False
+    session.get(User, uuid.UUID(user_id)).is_active = False
     session.commit()
 
     _assert_unauthorized(_con_cookie(anon_client, "/api/auth/refresh", valor))
+
+
+# --- CSRF ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize("ruta", ["/api/auth/refresh", "/api/auth/logout"])
+def test_sin_cabecera_csrf_no_toca_la_sesion(anon_client, ruta):
+    _registrar(anon_client)
+    valor = _cookie(_login(anon_client)).value
+
+    r = _con_cookie(anon_client, ruta, valor, headers={})
+    _assert_forbidden(r)
+    assert "set-cookie" not in r.headers
+
+    # La sesión sigue viva: el pedido rechazado no la rotó ni la cerró.
+    assert _con_cookie(anon_client, "/api/auth/refresh", valor).status_code == 200
+
+
+def test_origen_no_permitido(anon_client, monkeypatch):
+    monkeypatch.setattr(get_settings(), "AUTH_ALLOWED_ORIGINS", ["https://pubtube.example"])
+    _registrar(anon_client)
+    valor = _cookie(_login(anon_client)).value
+
+    ajeno = {**CSRF, "Origin": "https://atacante.example"}
+    _assert_forbidden(_con_cookie(anon_client, "/api/auth/logout", valor, headers=ajeno))
+
+    propio = {**CSRF, "Origin": "https://pubtube.example"}
+    assert _con_cookie(anon_client, "/api/auth/refresh", valor, headers=propio).status_code == 200
+
+
+def test_sin_origin_basta_la_cabecera(anon_client, monkeypatch):
+    # Un cliente que no es navegador (curl, otro servicio) no manda Origin.
+    monkeypatch.setattr(get_settings(), "AUTH_ALLOWED_ORIGINS", ["https://pubtube.example"])
+    _registrar(anon_client)
+    valor = _cookie(_login(anon_client)).value
+    assert _con_cookie(anon_client, "/api/auth/refresh", valor).status_code == 200
+
+
+def test_origenes_permitidos_desde_el_entorno(monkeypatch):
+    from app.config import Settings
+
+    monkeypatch.setenv("AUTH_ALLOWED_ORIGINS", "https://a.example/, https://b.example")
+    assert Settings().AUTH_ALLOWED_ORIGINS == ["https://a.example", "https://b.example"]
 
 
 # --- Logout -------------------------------------------------------------

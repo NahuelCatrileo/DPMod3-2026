@@ -13,50 +13,74 @@ frontend lo guarda en memoria. El refresh token va solo en una cookie
 HttpOnly: el JavaScript de la página no lo puede leer, así que un XSS no se
 lo lleva. La cookie solo viaja a /api/auth, que es el mismo camino directo al
 módulo y a través del gateway.
+
+CSRF: refresh y logout se autentican con la cookie, que el navegador manda
+solo. Por eso exigen la cabecera X-CSRF-Protection: un formulario de otro
+sitio no puede ponerla, y un fetch desde otro origen la anuncia en un
+preflight que el gateway solo acepta para los orígenes de la UI. Si viene
+Origin, además tiene que estar en AUTH_ALLOWED_ORIGINS. Register y login no
+la necesitan: solo aceptan JSON, que un formulario de otro sitio no puede
+mandar.
 """
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Cookie, Depends, Response, status
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Cookie, Depends, Request, Response, status
+from pydantic import AliasChoices, BaseModel, Field, StringConstraints
 from sqlalchemy.orm import Session
 
 from app.api.auth import require_user
 from app.api.routes_auth import TokenResponse
 from app.api.schemas import ErrorResponse
 from app.config import get_settings
-from app.domain.errors import UnauthorizedError
+from app.domain.errors import ForbiddenError, UnauthorizedError
 from app.infra.db import get_session
 from app.infra.models import User
 from app.services import user_auth
-from app.services.tokens import USER_ROLE
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 REFRESH_COOKIE = "pubtube_refresh"
+CSRF_HEADER = "X-CSRF-Protection"
 _COOKIE_PATH = "/api/auth"
 
 _401 = {401: {"model": ErrorResponse, "description": "UNAUTHORIZED"}}
+_403_CSRF = {
+    403: {
+        "model": ErrorResponse,
+        "description": f"UNAUTHORIZED: falta {CSRF_HEADER} o el origen no está permitido",
+    }
+}
 
 
 class RegisterRequest(BaseModel):
     # Los campos de más (role, is_active...) se ignoran: el rol no se elige.
-    username: str = Field(
-        ..., min_length=3, max_length=32, pattern=r"^[A-Za-z0-9_.-]+$", examples=["tu_canal"]
+    # displayName es el nombre del contrato; display_name (la columna del
+    # issue #11) y username (el campo del formulario de la UI) son alias.
+    displayName: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)
+    ] = Field(
+        ...,
+        validation_alias=AliasChoices("displayName", "display_name", "username"),
+        examples=["Ana Pérez"],
     )
-    email: str = Field(
-        ..., max_length=254, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", examples=["ana@example.com"]
-    )
+    email: Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=True, max_length=255, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+        ),
+    ] = Field(..., examples=["ana@example.com"])
     # El mínimo es el del formulario de registro de la UI. El máximo evita
     # que alguien mande megas para que Argon2id los procese.
     password: str = Field(..., min_length=8, max_length=128)
 
 
 class LoginRequest(BaseModel):
-    email: str = Field(..., min_length=1, max_length=254)
+    email: str = Field(..., min_length=1, max_length=255)
     password: str = Field(..., min_length=1, max_length=128)
     # "Recordar sesión": la cookie sobrevive al cierre del navegador.
     remember: bool = False
@@ -64,8 +88,8 @@ class LoginRequest(BaseModel):
 
 class Account(BaseModel):
     id: str
-    username: str
     email: str
+    displayName: str
     role: str
     createdAt: datetime
 
@@ -78,13 +102,22 @@ class AccountResponse(BaseModel):
 def _account(user: User) -> AccountResponse:
     return AccountResponse(
         data=Account(
-            id=user.id,
-            username=user.username,
-            email=user.email,
-            role=USER_ROLE,
+            id=str(user.id),
+            email=user.email_normalized,
+            displayName=user.display_name,
+            role=user.role,
             createdAt=user.created_at,
         )
     )
+
+
+def _require_csrf(request: Request) -> None:
+    if not request.headers.get(CSRF_HEADER):
+        raise ForbiddenError(f"Falta la cabecera {CSRF_HEADER}.")
+    origin = request.headers.get("origin")
+    permitidos = get_settings().AUTH_ALLOWED_ORIGINS
+    if origin and permitidos and origin.rstrip("/") not in permitidos:
+        raise ForbiddenError("El origen de la petición no está permitido.")
 
 
 def _cookie_attrs() -> dict[str, Any]:
@@ -131,7 +164,7 @@ def _tokens(response: Response, user: User, refresh: str, persistent: bool) -> T
 )
 def register(body: RegisterRequest, session: Session = Depends(get_session)) -> AccountResponse:
     user = user_auth.register_user(
-        session, username=body.username, email=body.email, password=body.password
+        session, display_name=body.displayName, email=body.email, password=body.password
     )
     return _account(user)
 
@@ -163,7 +196,11 @@ def login(
 def me(
     claims: dict[str, Any] = Depends(require_user), session: Session = Depends(get_session)
 ) -> AccountResponse:
-    user = session.get(User, claims["sub"])
+    try:
+        user = session.get(User, uuid.UUID(claims["sub"]))
+    except ValueError:
+        # Un `sub` que no es UUID no puede ser de una cuenta.
+        user = None
     if user is None or not user.is_active:
         raise UnauthorizedError("La cuenta del token no existe o está desactivada.")
     return _account(user)
@@ -172,7 +209,8 @@ def me(
 @router.post(
     "/refresh",
     response_model=TokenResponse,
-    responses=_401,
+    responses={**_401, **_403_CSRF},
+    dependencies=[Depends(_require_csrf)],
     summary="Renovar el JWT con la cookie de sesión (issue #11)",
 )
 def refresh(
@@ -195,6 +233,8 @@ def refresh(
     "/logout",
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
+    responses=_403_CSRF,
+    dependencies=[Depends(_require_csrf)],
     summary="Cerrar la sesión (issue #11)",
 )
 def logout(

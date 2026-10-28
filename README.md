@@ -53,17 +53,21 @@ Para probar en local sin registrar un cliente, genere un token con
 Las personas tienen cuenta propia (ADR-0009, issue #11):
 `POST /api/auth/register`, `POST /api/auth/login` (correo y contraseña),
 `GET /api/auth/me`, `POST /api/auth/refresh` y `POST /api/auth/logout`. El
-login entrega un JWT con `role: user` y deja la sesión en una cookie
-HttpOnly. Con ese token, un usuario solo ve las publicaciones que programó.
-Los tokens de servicio siguen viendo todas. Qué tiene que cambiar el gateway
-para publicar estas rutas está en
-[`docs/gateway-auth-usuarios.md`](docs/gateway-auth-usuarios.md).
+login entrega un JWT con `kind: user` y el `role` de la cuenta, y deja la
+sesión en una cookie HttpOnly. Con ese token, un usuario solo ve las
+publicaciones que programó. Los tokens de servicio (`kind: service`) siguen
+viendo todas. `refresh` y `logout` exigen la cabecera `X-CSRF-Protection`.
+Qué tiene que cambiar el gateway para publicar estas rutas está en
+[`docs/gateway-auth-usuarios.md`](docs/gateway-auth-usuarios.md), y el
+resultado de las pruebas, en
+[`docs/pruebas-issue-11.md`](docs/pruebas-issue-11.md).
 
 ```bash
 curl -X POST http://localhost:8000/api/auth/register -H 'Content-Type: application/json' \
-  -d '{"username":"ana","email":"ana@example.com","password":"clave-segura-1"}'
+  -d '{"displayName":"Ana","email":"ana@example.com","password":"clave-segura-1"}'
 curl -c sesion.txt -X POST http://localhost:8000/api/auth/login -H 'Content-Type: application/json' \
   -d '{"email":"ana@example.com","password":"clave-segura-1"}'
+curl -b sesion.txt -c sesion.txt -H 'X-CSRF-Protection: 1' -X POST http://localhost:8000/api/auth/refresh
 ```
 
 ## Correr los tests
@@ -80,7 +84,7 @@ pytest --cov=app --cov-report=term-missing
 ruff check app tests
 ```
 
-Estado actual: **315 tests, 97 % de cobertura**. El umbral de la DoD es 70 %.
+Estado actual: **407 tests, 96 % de cobertura**. El umbral de la DoD es 70 %.
 
 ---
 
@@ -104,6 +108,7 @@ Estado actual: **315 tests, 97 % de cobertura**. El umbral de la DoD es 70 %.
 | `AUTH_REFRESH_TOKEN_DAYS` | 1–90 | ADR-0009. Días que dura una sesión de usuario sin uso. Cada refresh reinicia el plazo. |
 | `AUTH_COOKIE_SECURE` | bool | ADR-0009. Atributo `Secure` de la cookie de sesión. `true` salvo en pruebas por HTTP que no sean `localhost`. |
 | `AUTH_COOKIE_SAMESITE` | `strict` \| `lax` \| `none` | ADR-0009. `strict` por defecto. `none` solo si la UI está en otro dominio que el gateway. |
+| `AUTH_ALLOWED_ORIGINS` | orígenes separados por comas | ADR-0009. Si `refresh` o `logout` traen `Origin`, tiene que estar aquí. Vacío = no se revisa `Origin`, pero sí la cabecera `X-CSRF-Protection`. |
 | `JWT_ISSUER` / `JWT_AUDIENCE` | texto | Opcionales. `JWT_AUDIENCE` va vacío: el gateway rechaza los tokens que traen `aud`. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | texto | US-C3, ADR-0008. Cliente OAuth "Aplicación web" de Google Cloud. Vacíos = OAuth sin configurar. |
 | `OAUTH_REDIRECT_URI` | URL | US-C3. Idéntica a la URI de redirección registrada en el cliente. |
@@ -125,7 +130,7 @@ Estado actual: **315 tests, 97 % de cobertura**. El umbral de la DoD es 70 %.
 | US-C6 · Máquina de estados | 3 | **Completa** | — |
 | US-C3 · YouTube real | 8 | **En curso** (Sprint 3): OAuth listo (C3.1–C3.3), subida real con `videos.insert` reanudable (C3.5) y metadatos del M1 por REST (C3.4) | Archivo del video del M1 (C3.4), mapeo fino de errores (C3.6), pruebas y demo (C3.7–C3.8) |
 | US-C7 · Reintento manual | 3 | No iniciada | Sprint 4 |
-| Issue #11 · Cuentas de usuario y sesiones (pedido del Módulo 4) | — | **Completa en el módulo** (ADR-0009) | Que el Equipo D publique las rutas en el gateway (`docs/gateway-auth-usuarios.md`) |
+| Issue #11 · Cuentas de usuario y sesiones (pedido del Módulo 4) | — | **Completa en el módulo y verificada** (ADR-0009, `docs/pruebas-issue-11.md`) | Que el Equipo D integre el parche del gateway y que se acuerden HTTPS, CORS y cookies (`docs/gateway-auth-usuarios.md`) |
 
 **`failed` es terminal, `pending` no.** El reintento manual de una publicación
 fallida (US-C7) queda para el Sprint 4: `failed → pending` **no** está permitido

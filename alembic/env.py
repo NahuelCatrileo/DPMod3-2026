@@ -25,11 +25,21 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+def _run(connection) -> None:
+    context.configure(connection=connection, target_metadata=target_metadata)
+    with context.begin_transaction():
+        context.run_migrations()
+
+
 def run_migrations_online() -> None:
+    # Una prueba puede pasar su propia conexión, para migrar una base aparte
+    # de la de la app (tests/test_migraciones.py).
+    connection = config.attributes.get("connection")
+    if connection is not None:
+        _run(connection)
+        return
     with engine.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
-        with context.begin_transaction():
-            context.run_migrations()
+        _run(connection)
 
 
 if context.is_offline_mode():

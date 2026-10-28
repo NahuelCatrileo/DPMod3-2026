@@ -52,8 +52,16 @@ def test_emite_token_con_credenciales_en_el_formulario(anon_client, clientes):
     )
     assert claims["sub"] == "gateway"
     assert claims["role"] == "service"
+    # ADR-0009: el claim kind separa los tokens de servicio de los de usuario.
+    assert claims["kind"] == "service"
     assert claims["exp"] - claims["iat"] == body["expires_in"]
     assert claims["jti"]
+
+
+def test_un_cliente_de_servicio_no_puede_tener_rol_de_usuario():
+    # ADR-0009: con role "user" se confundiría con una cuenta de persona.
+    with pytest.raises(ValueError, match="role 'user'"):
+        AuthClient(secret_hash=hash_secret(SECRETO, iterations=1000), role="user")
 
 
 def test_emite_token_con_http_basic(anon_client, clientes):

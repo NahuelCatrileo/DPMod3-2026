@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime
 from datetime import timezone as dt_timezone
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.domain.states import PublishState
@@ -67,20 +67,25 @@ class Publication(Base):
 class User(Base):
     """Issue #11 · Cuenta de una persona que usa PubTube (ADR-0009).
 
-    Correo y nombre de usuario se guardan en minúsculas, así la unicidad no
-    depende de mayúsculas. La contraseña nunca se guarda: solo su hash
+    Columnas de la tabla del issue #11, sección 2. El correo se guarda en
+    minúsculas y sin espacios (`email_normalized`), así la unicidad no
+    depende de cómo se escribió. La contraseña nunca se guarda: solo su hash
     Argon2id.
     """
 
     # "user" es palabra reservada en PostgreSQL.
     __tablename__ = "app_user"
 
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    email_normalized: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    # Nombre que se muestra. No es único: dos personas pueden llamarse igual.
+    display_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    # Va en el claim `role` del JWT. El registro siempre crea "user"; otro
+    # rol (por ejemplo "admin") se asigna en la base.
+    role: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="user", server_default="user"
     )
-    email: Mapped[str] = mapped_column(String(254), nullable=False, unique=True)
-    username: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
-    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     # Desactivar una cuenta corta el login y el refresh sin borrar su historial.
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -105,8 +110,8 @@ class RefreshToken(Base):
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
-    user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("app_user.id", ondelete="CASCADE"), nullable=False, index=True
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("app_user.id", ondelete="CASCADE"), nullable=False, index=True
     )
     family_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
