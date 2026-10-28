@@ -17,11 +17,12 @@ módulo y a través del gateway.
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Cookie, Depends, Response, status
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, StringConstraints
 from sqlalchemy.orm import Session
 
 from app.api.auth import require_user
@@ -32,7 +33,6 @@ from app.domain.errors import UnauthorizedError
 from app.infra.db import get_session
 from app.infra.models import User
 from app.services import user_auth
-from app.services.tokens import USER_ROLE
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -44,19 +44,28 @@ _401 = {401: {"model": ErrorResponse, "description": "UNAUTHORIZED"}}
 
 class RegisterRequest(BaseModel):
     # Los campos de más (role, is_active...) se ignoran: el rol no se elige.
-    username: str = Field(
-        ..., min_length=3, max_length=32, pattern=r"^[A-Za-z0-9_.-]+$", examples=["tu_canal"]
+    # displayName es el nombre del contrato; display_name (la columna del
+    # issue #11) y username (el campo del formulario de la UI) son alias.
+    displayName: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)
+    ] = Field(
+        ...,
+        validation_alias=AliasChoices("displayName", "display_name", "username"),
+        examples=["Ana Pérez"],
     )
-    email: str = Field(
-        ..., max_length=254, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", examples=["ana@example.com"]
-    )
+    email: Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=True, max_length=255, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+        ),
+    ] = Field(..., examples=["ana@example.com"])
     # El mínimo es el del formulario de registro de la UI. El máximo evita
     # que alguien mande megas para que Argon2id los procese.
     password: str = Field(..., min_length=8, max_length=128)
 
 
 class LoginRequest(BaseModel):
-    email: str = Field(..., min_length=1, max_length=254)
+    email: str = Field(..., min_length=1, max_length=255)
     password: str = Field(..., min_length=1, max_length=128)
     # "Recordar sesión": la cookie sobrevive al cierre del navegador.
     remember: bool = False
@@ -64,8 +73,8 @@ class LoginRequest(BaseModel):
 
 class Account(BaseModel):
     id: str
-    username: str
     email: str
+    displayName: str
     role: str
     createdAt: datetime
 
@@ -78,10 +87,10 @@ class AccountResponse(BaseModel):
 def _account(user: User) -> AccountResponse:
     return AccountResponse(
         data=Account(
-            id=user.id,
-            username=user.username,
-            email=user.email,
-            role=USER_ROLE,
+            id=str(user.id),
+            email=user.email_normalized,
+            displayName=user.display_name,
+            role=user.role,
             createdAt=user.created_at,
         )
     )
@@ -131,7 +140,7 @@ def _tokens(response: Response, user: User, refresh: str, persistent: bool) -> T
 )
 def register(body: RegisterRequest, session: Session = Depends(get_session)) -> AccountResponse:
     user = user_auth.register_user(
-        session, username=body.username, email=body.email, password=body.password
+        session, display_name=body.displayName, email=body.email, password=body.password
     )
     return _account(user)
 
@@ -163,7 +172,11 @@ def login(
 def me(
     claims: dict[str, Any] = Depends(require_user), session: Session = Depends(get_session)
 ) -> AccountResponse:
-    user = session.get(User, claims["sub"])
+    try:
+        user = session.get(User, uuid.UUID(claims["sub"]))
+    except ValueError:
+        # Un `sub` que no es UUID no puede ser de una cuenta.
+        user = None
     if user is None or not user.is_active:
         raise UnauthorizedError("La cuenta del token no existe o está desactivada.")
     return _account(user)

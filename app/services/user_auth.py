@@ -3,7 +3,8 @@
 Complementa a client_credentials.py: aquella entrega tokens a sistemas y
 esta a personas. Las dos firman con `sign_access_token`, así que el gateway y
 app/api/auth.py validan un token de usuario igual que uno de servicio. Lo que
-cambia es `role: user`, que limita al usuario a sus propias publicaciones.
+cambia es `role`, que sale de la cuenta (`user` por defecto) y limita al
+usuario a sus propias publicaciones.
 
 - Contraseñas: Argon2id con el perfil de baja memoria de RFC 9106
   (64 MiB, 3 pasadas, 4 hilos), de argon2-cffi.
@@ -23,14 +24,14 @@ from datetime import datetime, timedelta, timezone
 
 from argon2 import PasswordHasher, profiles
 from argon2.exceptions import InvalidHashError, VerificationError
-from sqlalchemy import or_, select, update
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.domain.errors import DuplicateUserError, UnauthorizedError
 from app.infra.models import RefreshToken, User
-from app.services.tokens import USER_ROLE, sign_access_token
+from app.services.tokens import sign_access_token
 
 logger = logging.getLogger(__name__)
 
@@ -59,29 +60,35 @@ def verify_password(password: str, stored_hash: str) -> bool:
 _HASH_RELLENO = hash_password(secrets.token_urlsafe(16))
 
 
-def _normalizar(valor: str) -> str:
-    return valor.strip().lower()
+_CORREO_DUPLICADO = "Ya existe una cuenta con ese correo."
 
 
-def register_user(session: Session, *, username: str, email: str, password: str) -> User:
-    username, email = _normalizar(username), _normalizar(email)
+def normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
+def register_user(
+    session: Session, *, display_name: str, email: str, password: str
+) -> User:
+    email = normalize_email(email)
     existente = session.execute(
-        select(User).where(or_(User.email == email, User.username == username))
-    ).scalars().first()
+        select(User.id).where(User.email_normalized == email)
+    ).first()
     if existente is not None:
-        campo = "correo" if existente.email == email else "nombre de usuario"
-        raise DuplicateUserError(f"Ya existe una cuenta con ese {campo}.")
+        raise DuplicateUserError(_CORREO_DUPLICADO)
 
-    user = User(username=username, email=email, password_hash=hash_password(password))
+    user = User(
+        email_normalized=email,
+        display_name=display_name,
+        password_hash=hash_password(password),
+    )
     session.add(user)
     try:
         session.commit()
     except IntegrityError as exc:
         # Dos registros simultáneos con el mismo correo: la base decide.
         session.rollback()
-        raise DuplicateUserError(
-            "Ya existe una cuenta con ese correo o nombre de usuario."
-        ) from exc
+        raise DuplicateUserError(_CORREO_DUPLICADO) from exc
     # El correo no va al log: es un dato personal.
     logger.info("usuario_registrado user_id=%s", user.id)
     return user
@@ -89,7 +96,7 @@ def register_user(session: Session, *, username: str, email: str, password: str)
 
 def authenticate_user(session: Session, email: str, password: str) -> User | None:
     user = session.execute(
-        select(User).where(User.email == _normalizar(email))
+        select(User).where(User.email_normalized == normalize_email(email))
     ).scalars().first()
     if user is None:
         verify_password(password, _HASH_RELLENO)
@@ -106,7 +113,7 @@ def authenticate_user(session: Session, email: str, password: str) -> User | Non
 
 def issue_user_access_token(user: User) -> tuple[str, int]:
     """Devuelve (token, segundos de vigencia)."""
-    token, vigencia, jti = sign_access_token(user.id, USER_ROLE)
+    token, vigencia, jti = sign_access_token(str(user.id), user.role)
     logger.info("jwt_emitido user_id=%s jti=%s", user.id, jti)
     return token, vigencia
 
@@ -115,7 +122,9 @@ def _hash_refresh(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def _nuevo_refresh(session: Session, user_id: str, family_id: str, persistent: bool) -> str:
+def _nuevo_refresh(
+    session: Session, user_id: uuid.UUID, family_id: str, persistent: bool
+) -> str:
     token = secrets.token_urlsafe(32)
     session.add(
         RefreshToken(
