@@ -1,0 +1,4 @@
+# Los scripts de shell y el parche se usan en Linux (contenedores y CI):
+# siempre con LF, aunque se clonen en Windows con core.autocrlf=true.
+*.sh text eol=lf
+*.patch text eol=lf
